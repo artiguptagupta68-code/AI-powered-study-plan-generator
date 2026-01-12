@@ -129,8 +129,8 @@ if drive_link:
 return syllabus
 
 
-    syllabus = extract_syllabus_from_pdfs(extract_dir)
-    st.success("📚 Syllabus parsed successfully!")
+syllabus = extract_syllabus_from_pdfs(extract_dir)
+st.success("📚 Syllabus parsed successfully!")
 
     # -------------------------------
     # 3) Calculate estimated time for each topic
