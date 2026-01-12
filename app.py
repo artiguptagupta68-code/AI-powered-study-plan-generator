@@ -1,72 +1,34 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
+from sklearn.cluster import KMeans
 
 # -------------------------------
-# COMPLETE SYLLABUS DATA
+# SYLLABUS DATA
 # -------------------------------
 SYLLABUS = {
 
     "UPSC CSE": {
-        "Polity": [
-            "Constitution", "Fundamental Rights", "Parliament",
-            "Judiciary", "Federalism", "Governance"
-        ],
-        "History": [
-            "Ancient History", "Medieval History",
-            "Modern History", "World History"
-        ],
-        "Geography": [
-            "Physical Geography", "Indian Geography",
-            "World Geography", "Environment Geography"
-        ],
-        "Economy": [
-            "Indian Economy", "Budget",
-            "Economic Survey", "Planning"
-        ],
-        "Environment": [
-            "Ecology", "Biodiversity",
-            "Climate Change", "Environmental Policies"
-        ],
-        "Science & Technology": [
-            "Biotechnology", "Space Technology",
-            "Defence Technology", "IT & AI"
-        ]
+        "Polity": ["Constitution", "Parliament", "Judiciary"],
+        "History": ["Ancient", "Medieval", "Modern"],
+        "Geography": ["Physical", "Indian", "World"],
+        "Economy": ["Budget", "Survey", "Planning"],
+        "Environment": ["Ecology", "Climate Change"],
+        "Science & Tech": ["Biotech", "Space", "IT"]
     },
 
     "SSC": {
-        "Quantitative Aptitude": [
-            "Number System", "Percentage", "Profit & Loss",
-            "Time & Work", "Algebra", "Geometry"
-        ],
-        "Reasoning": [
-            "Analogy", "Series", "Coding-Decoding",
-            "Blood Relations", "Puzzles"
-        ],
-        "English": [
-            "Grammar", "Vocabulary", "Reading Comprehension",
-            "Sentence Improvement"
-        ],
-        "General Awareness": [
-            "History", "Geography", "Polity",
-            "Economy", "Current Affairs"
-        ]
+        "Quantitative Aptitude": ["Algebra", "Geometry", "Arithmetic"],
+        "Reasoning": ["Analogy", "Series", "Puzzles"],
+        "English": ["Grammar", "Vocabulary", "RC"],
+        "General Awareness": ["History", "Geography", "Current Affairs"]
     },
 
     "GATE": {
-        "Engineering Mathematics": [
-            "Linear Algebra", "Calculus",
-            "Probability", "Differential Equations"
-        ],
-        "Core Subject 1": [
-            "Subject Topic 1", "Subject Topic 2",
-            "Subject Topic 3"
-        ],
-        "Core Subject 2": [
-            "Advanced Topic 1", "Advanced Topic 2"
-        ],
-        "General Aptitude": [
-            "Verbal Ability", "Numerical Ability"
-        ]
+        "Engineering Mathematics": ["Calculus", "Linear Algebra"],
+        "Core Subject 1": ["Topic 1", "Topic 2"],
+        "Core Subject 2": ["Advanced Topic 1"],
+        "General Aptitude": ["Verbal", "Numerical"]
     }
 }
 
@@ -75,54 +37,71 @@ SYLLABUS = {
 # -------------------------------
 st.set_page_config(page_title="AI Study Plan Generator")
 st.title("📘 AI-Powered Personalized Study Plan")
-st.write("Syllabus-based adaptive study planning")
 
 exam = st.selectbox("Select Exam", list(SYLLABUS.keys()))
 
-st.subheader("📊 Enter Your Accuracy (%) Per Subject")
+st.subheader("📊 Enter Your Accuracy (%)")
 
 performance = {}
-
 for subject in SYLLABUS[exam]:
-    performance[subject] = st.slider(
-        subject, 0, 100, 50
-    )
+    performance[subject] = st.slider(subject, 0, 100, 50)
 
 # -------------------------------
-# STUDY PLAN LOGIC
+# CLUSTERING + STUDY PLAN
 # -------------------------------
 if st.button("Generate Study Plan"):
 
     df = pd.DataFrame({
         "Subject": performance.keys(),
-        "Accuracy (%)": performance.values()
+        "Accuracy": performance.values()
     })
 
-    df["Weakness Score"] = 100 - df["Accuracy (%)"]
-    df = df.sort_values("Weakness Score", ascending=False)
+    # ---------------------------
+    # KMEANS CLUSTERING
+    # ---------------------------
+    X = df[["Accuracy"]].values
 
-    total_study_hours = 6
-    df["Daily Hours"] = (
-        df["Weakness Score"] / df["Weakness Score"].sum()
-    ) * total_study_hours
+    kmeans = KMeans(n_clusters=3, random_state=42)
+    df["Cluster"] = kmeans.fit_predict(X)
 
-    st.subheader("📅 Personalized Daily Study Plan")
-    st.dataframe(df)
+    # Map clusters to skill levels
+    cluster_means = df.groupby("Cluster")["Accuracy"].mean().sort_values()
+
+    skill_map = {}
+    labels = ["Beginner", "Intermediate", "Advanced"]
+
+    for i, cluster in enumerate(cluster_means.index):
+        skill_map[cluster] = labels[i]
+
+    df["Skill Level"] = df["Cluster"].map(skill_map)
 
     # ---------------------------
-    # SUBJECT-WISE BREAKDOWN
+    # STUDY HOURS ALLOCATION
     # ---------------------------
-    st.subheader("📚 Topic-Level Focus")
+    df["Priority Score"] = 100 - df["Accuracy"]
+    total_hours = 6
 
-    for subject in df["Subject"]:
-        if performance[subject] < 60:
-            st.warning(f"🔴 {subject}")
-            st.write(", ".join(SYLLABUS[exam][subject]))
+    df["Daily Study Hours"] = (
+        df["Priority Score"] / df["Priority Score"].sum()
+    ) * total_hours
+
+    st.subheader("📊 Student Skill Segmentation")
+    st.dataframe(df[["Subject", "Accuracy", "Skill Level", "Daily Study Hours"]])
+
+    # ---------------------------
+    # RECOMMENDATIONS
+    # ---------------------------
+    st.subheader("🧠 AI Recommendations")
+
+    for _, row in df.iterrows():
+        if row["Skill Level"] == "Beginner":
+            st.error(f"🔴 Focus strongly on {row['Subject']}")
+            st.write(", ".join(SYLLABUS[exam][row["Subject"]]))
+
+        elif row["Skill Level"] == "Intermediate":
+            st.warning(f"🟡 Improve consistency in {row['Subject']}")
+
         else:
-            st.success(f"🟢 {subject} – Maintain & Revise")
+            st.success(f"🟢 Maintain performance in {row['Subject']}")
 
-    st.info(
-        "🔁 Study plan auto-adjusts after each mock test or quiz."
-    )
-
-print ("Study plan auto-adjusts after each mock test or quiz")
+    st.info("📈 Clusters update automatically after each performance update.")
