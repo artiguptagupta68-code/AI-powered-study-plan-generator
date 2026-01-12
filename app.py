@@ -12,8 +12,10 @@ SYLLABUS = {
         "Economy", "Environment", "Science & Tech"
     ],
     "SSC": [
-        "Quantitative Aptitude", "Reasoning",
-        "English", "General Awareness"
+        "Quantitative Aptitude",
+        "Reasoning",
+        "English",
+        "General Awareness"
     ],
     "GATE": [
         "Engineering Mathematics",
@@ -28,76 +30,76 @@ SYLLABUS = {
 # -----------------------------------
 ALPHA = 0.2
 GAMMA = 0.9
+TOTAL_HOURS = 6
 
 # -----------------------------------
-# STREAMLIT UI
+# STREAMLIT CONFIG
 # -----------------------------------
 st.set_page_config(page_title="Adaptive AI Study Planner")
 st.title("🎯 Adaptive AI Study Planner")
-st.write("Study plan updates automatically as you progress")
+st.caption(
+    "Tailors learning based on performance for UPSC, SSC & GATE aspirants"
+)
 
+# -----------------------------------
+# EXAM SELECTION
+# -----------------------------------
 exam = st.selectbox("Select Exam", list(SYLLABUS.keys()))
 
 subjects = SYLLABUS[exam]
 
 # -----------------------------------
-# SESSION STATE INIT
+# RESET STATE ON EXAM CHANGE
 # -----------------------------------
-if "accuracy" not in st.session_state:
+if "current_exam" not in st.session_state or st.session_state.current_exam != exam:
+    st.session_state.current_exam = exam
     st.session_state.accuracy = {s: 50 for s in subjects}
-
-if "Q" not in st.session_state:
     st.session_state.Q = np.zeros(len(subjects))
 
 # -----------------------------------
-# CURRENT PERFORMANCE INPUT
+# PERFORMANCE INPUT
 # -----------------------------------
-st.subheader("📊 Current Accuracy (%)")
+st.subheader("📊 Current Performance (%)")
 
 for s in subjects:
     st.session_state.accuracy[s] = st.slider(
-        s, 0, 100, st.session_state.accuracy[s]
+        s,
+        0,
+        100,
+        st.session_state.accuracy[s]
     )
 
 # -----------------------------------
-# UPDATE AFTER MOCK TEST
+# MOCK TEST UPDATE
 # -----------------------------------
 st.subheader("🧪 Update After Mock Test")
-st.caption("Enter new accuracy after studying / mock test")
 
 new_accuracy = {}
-
 for s in subjects:
     new_accuracy[s] = st.number_input(
-        f"{s} (New Accuracy)",
-        min_value=0,
-        max_value=100,
-        value=st.session_state.accuracy[s],
+        f"{s} (Post-Test Accuracy)",
+        0,
+        100,
+        st.session_state.accuracy[s],
         step=1
     )
 
 # -----------------------------------
-# GENERATE / UPDATE STUDY PLAN
+# UPDATE STUDY PLAN
 # -----------------------------------
-if st.button("Update Study Plan"):
+if st.button("Update Personalized Study Plan"):
 
-    rewards = []
-
+    # RL UPDATE
     for i, subject in enumerate(subjects):
         reward = new_accuracy[subject] - st.session_state.accuracy[subject]
-        rewards.append(reward)
 
-        # Q-learning update
         st.session_state.Q[i] = st.session_state.Q[i] + ALPHA * (
             reward + GAMMA * np.max(st.session_state.Q) - st.session_state.Q[i]
         )
 
-        # Update stored accuracy
         st.session_state.accuracy[subject] = new_accuracy[subject]
 
-    # -----------------------------------
     # DATAFRAME
-    # -----------------------------------
     df = pd.DataFrame({
         "Subject": subjects,
         "Accuracy": list(st.session_state.accuracy.values()),
@@ -105,7 +107,7 @@ if st.button("Update Study Plan"):
     })
 
     # -----------------------------------
-    # CLUSTERING (Skill Groups)
+    # CLUSTERING
     # -----------------------------------
     kmeans = KMeans(n_clusters=3, random_state=42)
     df["Cluster"] = kmeans.fit_predict(df[["Accuracy"]])
@@ -113,27 +115,24 @@ if st.button("Update Study Plan"):
     cluster_means = df.groupby("Cluster")["Accuracy"].mean().sort_values()
     skill_labels = ["Beginner", "Intermediate", "Advanced"]
 
-    cluster_map = {
+    df["Skill Level"] = df["Cluster"].map({
         cluster: skill_labels[i]
         for i, cluster in enumerate(cluster_means.index)
-    }
-
-    df["Skill Level"] = df["Cluster"].map(cluster_map)
+    })
 
     # -----------------------------------
-    # STUDY TIME ALLOCATION
+    # STUDY HOURS ALLOCATION
     # -----------------------------------
-    total_hours = 6
     df["Daily Study Hours"] = (
         df["RL Score"] / df["RL Score"].sum()
-    ) * total_hours
+    ) * TOTAL_HOURS
 
     df = df.sort_values("Daily Study Hours", ascending=False)
 
     # -----------------------------------
     # OUTPUT
     # -----------------------------------
-    st.subheader("📅 Updated Personalized Study Plan")
+    st.subheader("📅 Updated Adaptive Study Plan")
     st.dataframe(
         df[[
             "Subject",
@@ -146,14 +145,34 @@ if st.button("Update Study Plan"):
     # -----------------------------------
     # INSIGHTS
     # -----------------------------------
-    st.subheader("🧠 Learning Insights")
+    st.subheader("🧠 AI Insights")
 
     for _, row in df.iterrows():
         if row["Skill Level"] == "Beginner":
-            st.error(f"🔴 {row['Subject']} needs more focus")
+            st.error(f"🔴 {row['Subject']} needs intensive focus")
         elif row["Skill Level"] == "Intermediate":
             st.warning(f"🟡 {row['Subject']} improving steadily")
         else:
-            st.success(f"🟢 {row['Subject']} performing well")
+            st.success(f"🟢 {row['Subject']} well prepared")
 
-    st.success("✅ Study plan updated using real performance improvement")
+# -----------------------------------
+# MONETIZATION SECTION
+# -----------------------------------
+st.markdown("---")
+st.subheader("💳 Monetization Strategy")
+
+st.write("""
+This platform can be monetized through a **subscription-based model**:
+
+• **Free Tier**
+  - Manual study plan
+  - Limited updates
+
+• **Premium Tier**
+  - Reinforcement learning based adaptation
+  - Performance tracking over time
+  - Skill clustering & insights
+  - Personalized alerts & reminders
+
+This makes the solution scalable for UPSC, SSC & GATE aspirants.
+""")
