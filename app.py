@@ -126,7 +126,7 @@ if drive_link:
                         current_subject = "General"
                     syllabus[exam][current_subject][current_topic].append(line)
 
-    return syllabus
+return syllabus
 
 
     syllabus = extract_syllabus_from_pdfs(extract_dir)
