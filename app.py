@@ -1,6 +1,5 @@
 import streamlit as st
 from datetime import datetime, timedelta
-import pprint
 
 # ------------------------------
 # Step 1: Define the study plan
@@ -61,7 +60,7 @@ def generate_plan(start_date_str):
             dynamic_plan[exam][subject] = []
             current_date = start_date
             for topic in topics:
-                end_date = current_date + timedelta(days=topic["days"]-1)
+                end_date = current_date + timedelta(days=topic["days"] - 1)
                 dynamic_plan[exam][subject].append({
                     "topic": topic["topic"],
                     "start_date": current_date.strftime("%Y-%m-%d"),
@@ -76,19 +75,15 @@ def generate_plan(start_date_str):
 # ------------------------------
 
 def mark_complete(plan, exam, subject, topic_name, actual_days=None):
-    """
-    Marks a topic complete and optionally adjusts next topics if it took different days.
-    """
     topics = plan[exam][subject]
     for i, topic in enumerate(topics):
         if topic["topic"] == topic_name:
             topic["status"] = "Completed"
             if actual_days:
-                # Calculate difference in days
+                # Adjust next topics if actual days differ
                 planned_days = (datetime.strptime(topic["end_date"], "%Y-%m-%d") - 
                                 datetime.strptime(topic["start_date"], "%Y-%m-%d")).days + 1
                 delta_days = actual_days - planned_days
-                # Adjust next topics
                 for j in range(i+1, len(topics)):
                     start = datetime.strptime(topics[j]["start_date"], "%Y-%m-%d") + timedelta(days=delta_days)
                     end = datetime.strptime(topics[j]["end_date"], "%Y-%m-%d") + timedelta(days=delta_days)
@@ -97,19 +92,18 @@ def mark_complete(plan, exam, subject, topic_name, actual_days=None):
             break
 
 # ------------------------------
-# Streamlit UI
+# Step 4: Streamlit UI
 # ------------------------------
 
-st.title("📚 Study Plan Manager")
+st.title("📚 AI-Powered Study Plan Manager")
 
 # Step 1: Select start date
 start_date = st.date_input("Select start date for your study plan", datetime.today())
 
-# Step 2: Generate plan
+# Initialize session state for plan
 if "plan" not in st.session_state:
     st.session_state.plan = generate_plan(start_date.strftime("%Y-%m-%d"))
 
-# Step 3: Display plan
 st.subheader("Your Study Plan")
 for exam, subjects in st.session_state.plan.items():
     st.markdown(f"### {exam}")
@@ -124,11 +118,12 @@ for exam, subjects in st.session_state.plan.items():
             with col3:
                 st.text(topic["status"])
             with col4:
-                if st.button(f"Mark Completed", key=f"{exam}-{subject}-{topic['topic']}"):
+                # Unique key ensures buttons inside loops work reliably
+                button_key = f"{exam}-{subject}-{topic['topic']}-complete"
+                if st.button("Mark Completed", key=button_key):
                     mark_complete(st.session_state.plan, exam, subject, topic["topic"])
-                    st.experimental_rerun()  # refresh the page to show update
+                    st.success(f"Marked '{topic['topic']}' as completed!")
 
-# Step 4: Optionally adjust days
 st.subheader("Adjust Topic Duration")
 exam_select = st.selectbox("Exam", list(study_plan.keys()))
 subject_select = st.selectbox("Subject", list(study_plan[exam_select].keys()))
@@ -137,4 +132,3 @@ new_days = st.number_input("Actual days taken", min_value=1, value=1)
 if st.button("Update Duration"):
     mark_complete(st.session_state.plan, exam_select, subject_select, topic_select, actual_days=new_days)
     st.success(f"Updated '{topic_select}' duration to {new_days} days")
-    st.experimental_rerun()
