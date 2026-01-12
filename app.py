@@ -2,9 +2,8 @@ import streamlit as st
 from datetime import datetime, timedelta
 
 # ------------------------------
-# Step 1: Define the study plan
+# Study plan
 # ------------------------------
-
 study_plan = {
     "GATE": {
         "Control Systems": [
@@ -47,88 +46,88 @@ study_plan = {
 }
 
 # ------------------------------
-# Step 2: Generate plan with dates
+# Functions
 # ------------------------------
 
-def generate_plan(start_date_str):
-    start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
-    dynamic_plan = {}
+def generate_subject_plan(subject_topics, start_date):
+    """Generates a plan for a single subject starting from start_date"""
+    plan = []
+    current_date = start_date
+    for topic in subject_topics:
+        end_date = current_date + timedelta(days=topic["days"]-1)
+        plan.append({
+            "topic": topic["topic"],
+            "planned_days": topic["days"],
+            "start_date": current_date,
+            "end_date": end_date,
+            "status": "Pending",
+            "actual_days": None
+        })
+        current_date = end_date + timedelta(days=1)
+    return plan
 
-    for exam, subjects in study_plan.items():
-        dynamic_plan[exam] = {}
-        for subject, topics in subjects.items():
-            dynamic_plan[exam][subject] = []
-            current_date = start_date
-            for topic in topics:
-                end_date = current_date + timedelta(days=topic["days"] - 1)
-                dynamic_plan[exam][subject].append({
-                    "topic": topic["topic"],
-                    "start_date": current_date.strftime("%Y-%m-%d"),
-                    "end_date": end_date.strftime("%Y-%m-%d"),
-                    "status": "Pending"
-                })
-                current_date = end_date + timedelta(days=1)  # next topic starts the next day
-    return dynamic_plan
-
-# ------------------------------
-# Step 3: Update completion
-# ------------------------------
-
-def mark_complete(plan, exam, subject, topic_name, actual_days=None):
-    topics = plan[exam][subject]
-    for i, topic in enumerate(topics):
+def update_topic(plan, topic_name, actual_days):
+    """Updates a topic's completion and adjusts subsequent topic dates"""
+    for i, topic in enumerate(plan):
         if topic["topic"] == topic_name:
             topic["status"] = "Completed"
-            if actual_days:
-                # Adjust next topics if actual days differ
-                planned_days = (datetime.strptime(topic["end_date"], "%Y-%m-%d") - 
-                                datetime.strptime(topic["start_date"], "%Y-%m-%d")).days + 1
-                delta_days = actual_days - planned_days
-                for j in range(i+1, len(topics)):
-                    start = datetime.strptime(topics[j]["start_date"], "%Y-%m-%d") + timedelta(days=delta_days)
-                    end = datetime.strptime(topics[j]["end_date"], "%Y-%m-%d") + timedelta(days=delta_days)
-                    topics[j]["start_date"] = start.strftime("%Y-%m-%d")
-                    topics[j]["end_date"] = end.strftime("%Y-%m-%d")
+            topic["actual_days"] = actual_days
+            delta = actual_days - topic["planned_days"]
+            # Shift subsequent topics
+            for j in range(i+1, len(plan)):
+                plan[j]["start_date"] += timedelta(days=delta)
+                plan[j]["end_date"] += timedelta(days=delta)
             break
 
+def calculate_subject_end(plan):
+    """Returns current end date of subject (last topic's end_date)"""
+    if not plan:
+        return None
+    return plan[-1]["end_date"]
+
 # ------------------------------
-# Step 4: Streamlit UI
+# Streamlit UI
 # ------------------------------
 
-st.title("📚 AI-Powered Study Plan Manager")
+st.title("📚 Dynamic Study Plan Tracker")
 
-# Step 1: Select start date
-start_date = st.date_input("Select start date for your study plan", datetime.today())
+# Step 1: Select exam and subject
+exam_select = st.selectbox("Select Exam", list(study_plan.keys()))
+subject_select = st.selectbox("Select Subject", list(study_plan[exam_select].keys()))
 
-# Initialize session state for plan
-if "plan" not in st.session_state:
-    st.session_state.plan = generate_plan(start_date.strftime("%Y-%m-%d"))
+# Step 2: Pick start date for the subject individually
+subject_start_date = st.date_input(f"Select start date for {subject_select}")
 
-st.subheader("Your Study Plan")
-for exam, subjects in st.session_state.plan.items():
-    st.markdown(f"### {exam}")
-    for subject, topics in subjects.items():
-        st.markdown(f"**{subject}**")
-        for topic in topics:
-            col1, col2, col3, col4 = st.columns([3, 2, 2, 2])
-            with col1:
-                st.text(topic["topic"])
-            with col2:
-                st.text(f"{topic['start_date']} → {topic['end_date']}")
-            with col3:
-                st.text(topic["status"])
-            with col4:
-                # Unique key ensures buttons inside loops work reliably
-                button_key = f"{exam}-{subject}-{topic['topic']}-complete"
-                if st.button("Mark Completed", key=button_key):
-                    mark_complete(st.session_state.plan, exam, subject, topic["topic"])
-                    st.success(f"Marked '{topic['topic']}' as completed!")
+# Initialize subject plan in session state
+if "subject_plan" not in st.session_state:
+    st.session_state.subject_plan = {}
+if subject_select not in st.session_state.subject_plan:
+    st.session_state.subject_plan[subject_select] = generate_subject_plan(
+        study_plan[exam_select][subject_select],
+        subject_start_date
+    )
 
-st.subheader("Adjust Topic Duration")
-exam_select = st.selectbox("Exam", list(study_plan.keys()))
-subject_select = st.selectbox("Subject", list(study_plan[exam_select].keys()))
-topic_select = st.selectbox("Topic", [t["topic"] for t in st.session_state.plan[exam_select][subject_select]])
-new_days = st.number_input("Actual days taken", min_value=1, value=1)
-if st.button("Update Duration"):
-    mark_complete(st.session_state.plan, exam_select, subject_select, topic_select, actual_days=new_days)
-    st.success(f"Updated '{topic_select}' duration to {new_days} days")
+plan = st.session_state.subject_plan[subject_select]
+
+# Step 3: Display subject plan and mark progress
+st.subheader(f"{subject_select} Plan")
+for topic in plan:
+    col1, col2, col3, col4, col5 = st.columns([3, 2, 2, 2, 2])
+    with col1:
+        st.text(topic["topic"])
+    with col2:
+        st.text(f"{topic['start_date'].strftime('%Y-%m-%d')} → {topic['end_date'].strftime('%Y-%m-%d')}")
+    with col3:
+        st.text(topic["status"])
+    with col4:
+        st.text(topic["actual_days"] if topic["actual_days"] else "-")
+    with col5:
+        btn_key = f"{topic['topic']}_complete"
+        actual_days_input = st.number_input(f"Days taken for {topic['topic']}", min_value=1, value=topic["planned_days"], key=f"{topic['topic']}_days")
+        if st.button("Mark Completed", key=btn_key):
+            update_topic(plan, topic["topic"], actual_days_input)
+            st.success(f"Updated {topic['topic']}")
+
+# Step 4: Show dynamic subject completion date
+subject_end = calculate_subject_end(plan)
+st.subheader(f"Estimated Completion Date for {subject_select}: {subject_end.strftime('%Y-%m-%d') if subject_end else 'N/A'}")
