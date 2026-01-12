@@ -1,3 +1,4 @@
+import streamlit as st
 from datetime import datetime, timedelta
 import pprint
 
@@ -96,14 +97,44 @@ def mark_complete(plan, exam, subject, topic_name, actual_days=None):
             break
 
 # ------------------------------
-# Step 4: Example usage
+# Streamlit UI
 # ------------------------------
 
-plan = generate_plan("2026-01-12")  # start date of plan
-pprint.pprint(plan)  # print full plan
+st.title("📚 Study Plan Manager")
 
-# Mark a topic completed early
-mark_complete(plan, "GATE", "Control Systems", "Signals & Systems", actual_days=2)
+# Step 1: Select start date
+start_date = st.date_input("Select start date for your study plan", datetime.today())
 
-print("\nUpdated plan after completing 'Signals & Systems' early:\n")
-pprint.pprint(plan)
+# Step 2: Generate plan
+if "plan" not in st.session_state:
+    st.session_state.plan = generate_plan(start_date.strftime("%Y-%m-%d"))
+
+# Step 3: Display plan
+st.subheader("Your Study Plan")
+for exam, subjects in st.session_state.plan.items():
+    st.markdown(f"### {exam}")
+    for subject, topics in subjects.items():
+        st.markdown(f"**{subject}**")
+        for topic in topics:
+            col1, col2, col3, col4 = st.columns([3, 2, 2, 2])
+            with col1:
+                st.text(topic["topic"])
+            with col2:
+                st.text(f"{topic['start_date']} → {topic['end_date']}")
+            with col3:
+                st.text(topic["status"])
+            with col4:
+                if st.button(f"Mark Completed", key=f"{exam}-{subject}-{topic['topic']}"):
+                    mark_complete(st.session_state.plan, exam, subject, topic["topic"])
+                    st.experimental_rerun()  # refresh the page to show update
+
+# Step 4: Optionally adjust days
+st.subheader("Adjust Topic Duration")
+exam_select = st.selectbox("Exam", list(study_plan.keys()))
+subject_select = st.selectbox("Subject", list(study_plan[exam_select].keys()))
+topic_select = st.selectbox("Topic", [t["topic"] for t in st.session_state.plan[exam_select][subject_select]])
+new_days = st.number_input("Actual days taken", min_value=1, value=1)
+if st.button("Update Duration"):
+    mark_complete(st.session_state.plan, exam_select, subject_select, topic_select, actual_days=new_days)
+    st.success(f"Updated '{topic_select}' duration to {new_days} days")
+    st.experimental_rerun()
