@@ -28,7 +28,7 @@ SYLLABUS = {
 # -------------------------------
 st.set_page_config(page_title="Smart Study Planner", layout="wide")
 st.title("📘 Smart Adaptive Study Planner")
-st.caption("Plan your study based on remaining days, studied days, and available free hours per day.")
+st.caption("Plan your study based on remaining days, studied days, and free hours/day.")
 
 # -------------------------------
 # EXAM & SUBJECT SELECTION
@@ -40,48 +40,40 @@ subject_selected = st.selectbox("Select Subject", list(subjects.keys()))
 topics = subjects[subject_selected]
 
 # -------------------------------
-# USER INPUTS: Topic, Days, Hours
+# TOPIC DROPDOWN
 # -------------------------------
-st.subheader("Enter Topic Details")
-data = []
-for topic in topics:
-    st.markdown(f"**{topic}**")
-    total_days = st.number_input(f"Total days to complete {topic}", min_value=1, max_value=60, value=7, key=f"{topic}_total")
-    days_studied = st.number_input(f"Days already studied for {topic}", min_value=0, max_value=total_days, value=0, key=f"{topic}_studied")
-    free_hours = st.number_input(f"Free hours per day for {topic}", min_value=1, max_value=24, value=2, key=f"{topic}_free")
-    expected_days = total_days - days_studied
-    expected_days = max(expected_days, 1)  # avoid zero division
-    data.append({
-        "Subject": subject_selected,
-        "Topic": topic,
-        "Total Days": total_days,
-        "Days Studied": days_studied,
-        "Free Hours/Day": free_hours,
-        "Expected Days": expected_days
-    })
+topic_selected = st.selectbox("Select Topic", topics)
 
-df = pd.DataFrame(data)
+# -------------------------------
+# USER INPUTS
+# -------------------------------
+st.subheader(f"Topic: {topic_selected}")
+total_days = st.number_input(f"Total days to complete {topic_selected}", min_value=1, max_value=60, value=7)
+days_studied = st.number_input(f"Days already studied for {topic_selected}", min_value=0, max_value=total_days, value=0)
+free_hours = st.number_input(f"Free hours per day available", min_value=1, max_value=24, value=2)
+
+expected_days = total_days - days_studied
+expected_days = max(expected_days, 1)  # avoid zero division
 
 # -------------------------------
 # GENERATE STUDY PLAN
 # -------------------------------
 if st.button("Generate Study Plan"):
+    daily_hours = min(free_hours, free_hours * expected_days / expected_days)  # proportionate hours
 
-    # Allocate daily hours proportionally
-    df["Daily Study Hours"] = df.apply(lambda row: min(row["Free Hours/Day"], row["Free Hours/Day"] * row["Expected Days"] / row["Expected Days"]), axis=1)
-    
-    # Sort topics with fewer expected days first
-    df = df.sort_values("Expected Days")
+    plan_df = pd.DataFrame([{
+        "Exam": exam,
+        "Subject": subject_selected,
+        "Topic": topic_selected,
+        "Total Days": total_days,
+        "Days Studied": days_studied,
+        "Expected Days": expected_days,
+        "Daily Study Hours": round(daily_hours, 2)
+    }])
 
-    # Display table
-    st.subheader("📅 Day-wise Study Plan")
-    st.dataframe(df[["Subject", "Topic", "Days Studied", "Expected Days", "Daily Study Hours"]].round(2))
+    st.subheader("📅 Study Plan")
+    st.dataframe(plan_df)
 
-    # Insights
-    st.subheader("🧠 Learning Insights")
-    for _, row in df.iterrows():
-        st.write(
-            f"Topic **{row['Topic']}**: "
-            f"{row['Expected Days']} days left, "
-            f"study **{row['Daily Study Hours']:.1f} hours/day**"
-        )
+    st.subheader("🧠 Insight")
+    st.write(f"Topic **{topic_selected}** has **{expected_days} days remaining**. "
+             f"Study **{daily_hours:.1f} hours per day** to complete on time.")
