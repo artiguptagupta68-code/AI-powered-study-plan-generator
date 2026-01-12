@@ -1,161 +1,190 @@
 import streamlit as st
-from datetime import datetime, timedelta
+from dataclasses import dataclass, field
+from typing import List
+import requests
+from bs4 import BeautifulSoup
 
-# ------------------------------
-# Study plan
-# ------------------------------
-study_plan = {
-    "GATE": {
-        "Control Systems": [
-            {"topic": "Signals & Systems", "days": 3},
-            {"topic": "Time Response Analysis", "days": 4},
-            {"topic": "Frequency Response", "days": 5},
-            {"topic": "Control Design & Compensation", "days": 5}
-        ],
-        "Engineering Mathematics": [
-            {"topic": "Linear Algebra", "days": 3},
-            {"topic": "Calculus", "days": 3},
-            {"topic": "Differential Equations", "days": 3},
-            {"topic": "Probability & Statistics", "days": 3},
-            {"topic": "Numerical Methods", "days": 3}
-        ]
-    },
-    "UPSC": {
-        "History": [
-            {"topic": "Ancient", "days": 3},
-            {"topic": "Medieval", "days": 3},
-            {"topic": "Modern", "days": 4}
-        ],
-        "Geography": [
-            {"topic": "Physical", "days": 3},
-            {"topic": "Human", "days": 3}
-        ]
-    },
-    "SSC": {
-        "Quantitative Aptitude": [
-            {"topic": "Arithmetic", "days": 5},
-            {"topic": "Algebra", "days": 4},
-            {"topic": "Geometry", "days": 4},
-            {"topic": "Data Interpretation", "days": 3}
-        ],
-        "Reasoning": [
-            {"topic": "Verbal Reasoning", "days": 3},
-            {"topic": "Non-Verbal Reasoning", "days": 3}
-        ]
-    }
-}
+st.set_page_config(page_title="Dynamic Study Planner", layout="wide")
 
-# ------------------------------
-# Functions
-# ------------------------------
+# ---------------- DATA MODELS ---------------- #
 
-def generate_subject_plan(subject_topics, start_date):
-    """Generates plan for a single subject starting from start_date"""
-    plan = []
-    current_date = start_date
-    for topic in subject_topics:
-        end_date = current_date + timedelta(days=topic["days"]-1)
-        plan.append({
-            "topic": topic["topic"],
-            "planned_days": topic["days"],
-            "start_date": current_date,
-            "end_date": end_date,
-            "status": "Pending",
-            "actual_days": None
-        })
-        current_date = end_date + timedelta(days=1)
-    return plan
+@dataclass
+class SubTopic:
+    name: str
+    study: int
+    free: int
+    practice: int
+    status: str = "Pending"
 
-def recalc_plan(plan):
-    """Recalculates all topic dates based on planned_days or actual_days"""
-    current_date = plan[0]["start_date"]
-    for topic in plan:
-        # Always use actual_days if entered, else planned_days
-        days = topic["actual_days"] if topic["actual_days"] is not None else topic["planned_days"]
-        topic["start_date"] = current_date
-        topic["end_date"] = current_date + timedelta(days=days-1)
-        current_date = topic["end_date"] + timedelta(days=1)
+    @property
+    def total_time(self):
+        return self.study + self.free + self.practice
 
-def mark_topic(plan, topic_name, actual_days):
-    """Marks topic completed and updates future dates"""
-    for topic in plan:
-        if topic["topic"] == topic_name:
-            topic["status"] = "Completed"
-            topic["actual_days"] = actual_days
-            break
-    recalc_plan(plan)
 
-def calculate_subject_end(plan):
-    """Returns current end date of subject"""
-    if not plan:
+@dataclass
+class Topic:
+    name: str
+    subtopics: List[SubTopic] = field(default_factory=list)
+
+    def next_subtopic(self):
+        for s in self.subtopics:
+            if s.status != "Completed":
+                return s
         return None
-    return plan[-1]["end_date"]
 
-# ------------------------------
-# Streamlit UI
-# ------------------------------
 
-st.title("📚 Dynamic Study Plan Tracker")
+@dataclass
+class Subject:
+    name: str
+    topics: List[Topic]
+    revision: int
 
-# Step 1: Select exam and subject
-exam_select = st.selectbox("Select Exam", list(study_plan.keys()))
-subject_select = st.selectbox("Select Subject", list(study_plan[exam_select].keys()))
+    @property
+    def total_time(self):
+        return sum(
+            s.total_time
+            for t in self.topics
+            for s in t.subtopics
+        ) + self.revision
 
-# Step 2: Pick start date for the subject individually
-subject_start_date = st.date_input(f"Select start date for {subject_select}")
 
-# Initialize session state for subject plan
-if "subject_plan" not in st.session_state:
-    st.session_state.subject_plan = {}
-if subject_select not in st.session_state.subject_plan:
-    st.session_state.subject_plan[subject_select] = generate_subject_plan(
-        study_plan[exam_select][subject_select],
-        subject_start_date
-    )
-else:
-    # Update start date if changed
-    st.session_state.subject_plan[subject_select][0]["start_date"] = subject_start_date
-    recalc_plan(st.session_state.subject_plan[subject_select])
+@dataclass
+class Exam:
+    name: str
+    subjects: List[Subject]
 
-plan = st.session_state.subject_plan[subject_select]
 
-# Step 3: Display plan table with proper columns
-st.subheader(f"{subject_select} Plan")
-st.markdown(
-    "| Topic | Start Date | End Date | Status | Planned Days | Actual Days | Action |\n"
-    "|-------|------------|----------|--------|--------------|------------|--------|"
-)
+# ---------------- UTILS ---------------- #
 
-for i, topic in enumerate(plan):
-    col1, col2, col3, col4, col5, col6, col7 = st.columns([3, 2, 2, 2, 2, 2, 2])
-    with col1:
-        st.text(topic["topic"])
-    with col2:
-        st.text(topic["start_date"].strftime("%Y-%m-%d"))
-    with col3:
-        st.text(topic["end_date"].strftime("%Y-%m-%d"))
-    with col4:
-        st.text(topic["status"])
-    with col5:
-        # Planned Days input
-        planned_key = f"planned_{subject_select}_{i}"
-        planned = st.number_input(f"", min_value=1, value=topic["planned_days"], key=planned_key)
-        topic["planned_days"] = planned
-    with col6:
-        # Actual Days input (affects dynamic recalculation immediately)
-        actual_key = f"actual_{subject_select}_{i}"
-        actual_val = topic["actual_days"] if topic["actual_days"] is not None else topic["planned_days"]
-        actual = st.number_input(f"", min_value=1, value=actual_val, key=actual_key)
-        # Update actual_days even if topic is not completed yet
-        topic["actual_days"] = actual
-    with col7:
-        # Mark Completed button
-        btn_key = f"{subject_select}_{topic['topic']}_complete"
-        if st.button("Mark Completed", key=btn_key):
-            mark_topic(plan, topic["topic"], topic["actual_days"])
-            st.success(f"Marked '{topic['topic']}' completed.")
+def load_syllabus_from_url(url):
+    try:
+        r = requests.get(url, timeout=10)
+        soup = BeautifulSoup(r.text, "html.parser")
+        return [li.text.strip() for li in soup.find_all("li")[:20]]
+    except:
+        return []
 
-# Step 4: Recalculate subject end dynamically
-recalc_plan(plan)
-subject_end = calculate_subject_end(plan)
-st.subheader(f"Estimated Completion Date for {subject_select}: {subject_end.strftime('%Y-%m-%d') if subject_end else 'N/A'}")
+
+def assign_tasks(subjects, capacity):
+    assigned = []
+    remaining = capacity
+
+    for subject in subjects:
+        for topic in subject.topics:
+            sub = topic.next_subtopic()
+            if sub and sub.total_time <= remaining:
+                assigned.append((subject, topic, sub))
+                sub.status = "In Progress"
+                remaining -= sub.total_time
+
+    return assigned
+
+
+# ---------------- SESSION STATE ---------------- #
+
+if "exam" not in st.session_state:
+    st.session_state.exam = None
+
+# ---------------- UI ---------------- #
+
+st.title("📚 Dynamic UPSC / GATE / SSC Study Planner")
+
+# ----------- EXAM CREATION ----------- #
+
+with st.sidebar:
+    st.header("⚙️ Setup")
+
+    exam_name = st.text_input("Exam Name", "UPSC")
+
+    if st.button("Create Exam"):
+        st.session_state.exam = Exam(exam_name, [])
+        st.success("Exam created")
+
+# ----------- SUBJECT CREATION ----------- #
+
+if st.session_state.exam:
+    st.subheader(f"🎯 Exam: {st.session_state.exam.name}")
+
+    with st.expander("➕ Add Subject"):
+        sub_name = st.text_input("Subject Name")
+        revision = st.number_input("Revision Time (hrs)", 0, 50, 3)
+
+        if st.button("Add Subject"):
+            st.session_state.exam.subjects.append(
+                Subject(sub_name, [], revision)
+            )
+            st.success("Subject added")
+
+# ----------- TOPIC & SUBTOPIC ----------- #
+
+for subject in st.session_state.exam.subjects if st.session_state.exam else []:
+    with st.expander(f"📘 {subject.name} (Total: {subject.total_time} hrs)"):
+
+        topic_name = st.text_input(f"Topic name for {subject.name}", key=subject.name)
+        if st.button("Add Topic", key=f"add_{subject.name}"):
+            subject.topics.append(Topic(topic_name))
+            st.success("Topic added")
+
+        for topic in subject.topics:
+            st.markdown(f"### 🔹 {topic.name}")
+
+            c1, c2, c3 = st.columns(3)
+            sub_name = c1.text_input("Subtopic", key=f"{topic.name}_name")
+            study = c2.number_input("Study hrs", 0, 20, 2, key=f"{topic.name}_study")
+            practice = c3.number_input("Practice hrs", 0, 20, 1, key=f"{topic.name}_prac")
+            free = st.number_input("Free days", 0, 10, 1, key=f"{topic.name}_free")
+
+            if st.button("Add Subtopic", key=f"{topic.name}_add"):
+                topic.subtopics.append(SubTopic(sub_name, study, free, practice))
+                st.success("Subtopic added")
+
+            for s in topic.subtopics:
+                st.write(
+                    f"➡️ {s.name} | ⏱ {s.total_time} hrs | 📌 {s.status}"
+                )
+
+# ----------- DAILY STUDY ALLOCATION ----------- #
+
+st.subheader("🗓️ Daily Study Allocation")
+
+daily_capacity = st.number_input("Daily Study Capacity (hrs)", 1, 24, 6)
+
+if st.button("Assign Today's Study"):
+    tasks = assign_tasks(st.session_state.exam.subjects, daily_capacity)
+    if tasks:
+        st.success("Tasks assigned")
+        for subj, top, sub in tasks:
+            st.write(f"✅ {subj.name} → {top.name} → {sub.name}")
+    else:
+        st.warning("No tasks available")
+
+# ----------- UPDATE PROGRESS ----------- #
+
+st.subheader("🔄 Update Progress")
+
+for subject in st.session_state.exam.subjects if st.session_state.exam else []:
+    for topic in subject.topics:
+        for sub in topic.subtopics:
+            if sub.status == "In Progress":
+                col1, col2 = st.columns(2)
+                if col1.button(f"✔ Complete {sub.name}"):
+                    sub.status = "Completed"
+                    st.success("Marked Completed")
+                if col2.button(f"⏳ Delay {sub.name}"):
+                    sub.free += 1
+                    sub.status = "Pending"
+                    st.warning("Extended by 1 day")
+
+# ----------- SYLLABUS FETCH ----------- #
+
+st.subheader("🌐 Load Syllabus from Website")
+
+url = st.text_input("Syllabus URL")
+if st.button("Fetch Syllabus"):
+    syllabus = load_syllabus_from_url(url)
+    if syllabus:
+        st.success("Syllabus loaded")
+        for item in syllabus:
+            st.write("•", item)
+    else:
+        st.error("Could not fetch syllabus")
