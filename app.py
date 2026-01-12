@@ -53,59 +53,81 @@ if drive_link:
         return lines
 
     def extract_syllabus_from_pdfs(root_dir):
-        syllabus = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+    """
+    Extract syllabus from PDFs into:
+    Exam -> Subject -> Topic -> Subtopic hierarchy
+    Filters out invalid subject lines like '(Cmm).' or '(Nmo'
+    """
+    syllabus = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
 
-        for root, dirs, files in os.walk(root_dir):
-            for file in files:
-                if not file.lower().endswith(".pdf"):
+    # Known subjects heuristic (optional, can extend)
+    known_subjects_keywords = [
+        "Mathematics", "Engineering", "Geology", "Physics", "Chemistry", 
+        "General Studies", "Economics", "Polity", "CS", "Computer", "Science"
+    ]
+
+    for root, dirs, files in os.walk(root_dir):
+        for file in files:
+            if not file.lower().endswith(".pdf"):
+                continue
+            pdf_path = os.path.join(root, file)
+            lines = read_pdf_text(pdf_path)
+
+            # Detect Exam Name
+            exam = None
+            for line in lines[:10]:
+                l = line.upper()
+                if "GATE" in l:
+                    exam = "GATE 2026"
+                    break
+                elif "SSC" in l:
+                    exam = "SSC"
+                    break
+                elif "UPSC" in l:
+                    exam = "UPSC"
+                    break
+            if not exam:
+                exam = "Unknown Exam"
+
+            # Detect Subject, Topic, Subtopics
+            current_subject = None
+            current_topic = None
+
+            for line in lines:
+                line = line.strip()
+                if not line:
                     continue
-                pdf_path = os.path.join(root, file)
-                lines = read_pdf_text(pdf_path)
 
-                # Detect Exam Name
-                exam = None
-                for line in lines[:10]:
-                    if "GATE" in line.upper():
-                        exam = "GATE 2026"
-                        break
-                    elif "SSC" in line.upper():
-                        exam = "SSC"
-                        break
-                    elif "UPSC" in line.upper():
-                        exam = "UPSC"
-                        break
-                if not exam:
-                    exam = "Unknown Exam"
+                # -------------------
+                # Subject heuristic
+                # Uppercase, short, alphabetic, and contains known keyword
+                if (
+                    line.isupper() and 
+                    len(line.split()) <= 5 and
+                    line.replace(" ", "").isalpha() and
+                    any(kw.upper() in line.upper() for kw in known_subjects_keywords)
+                ):
+                    current_subject = line.title()
+                    continue
 
-                # Detect Subject, Topic, Subtopics
-                current_subject = None
-                current_topic = None
-                for line in lines:
-                    line = line.strip()
-                    if not line:
-                        continue
+                # -------------------
+                # Topic heuristic: short line, contains ":" or numbered
+                if (len(line.split()) <= 6 and ":" in line) or any(c.isdigit() for c in line[:3]):
+                    current_topic = line
+                    if not current_subject:
+                        current_subject = "General"
+                    syllabus[exam][current_subject][current_topic] = []
+                    continue
 
-                    # Subject heuristic: uppercase, <=5 words
-                    if line.isupper() and len(line.split()) <= 5:
-                        current_subject = line.title()
-                        continue
+                # -------------------
+                # Subtopic
+                if current_topic:
+                    if not current_subject:
+                        current_subject = "General"
+                    syllabus[exam][current_subject][current_topic].append(line)
 
-                    # Topic heuristic: short line, contains ":" or numbered
-                    if (len(line.split()) <= 6 and ":" in line) or any(c.isdigit() for c in line[:3]):
-                        current_topic = line
-                        # Use default subject if none detected
-                        if not current_subject:
-                            current_subject = "General"
-                        syllabus[exam][current_subject][current_topic] = []
-                        continue
+    return syllabus
 
-                    # Subtopic
-                    if current_topic:
-                        if not current_subject:
-                            current_subject = "General"
-                        syllabus[exam][current_subject][current_topic].append(line)
-
-        return syllabus
 
     syllabus = extract_syllabus_from_pdfs(extract_dir)
     st.success("📚 Syllabus parsed successfully!")
