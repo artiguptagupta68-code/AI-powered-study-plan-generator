@@ -46,32 +46,39 @@ if drive_link:
         return lines
 
     def build_syllabus(root_path):
-        syllabus = defaultdict(dict)
-        for root, dirs, files in os.walk(root_path):
-            exam = os.path.basename(root)
-            for file in files:
-                if file.lower().endswith(".pdf"):
-                    subject = os.path.splitext(file)[0]
-                    pdf_path = os.path.join(root, file)
-                    pdf_lines = read_pdf_text(pdf_path)
+    syllabus = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
 
-                    topics = defaultdict(list)
-                    current_topic = None
-                    for line in pdf_lines:
-                        if ':' in line or len(line.split()) <= 6:
-                            if current_topic:
-                                topics[current_topic] = topics[current_topic]
-                            current_topic = line
-                        else:
-                            if current_topic:
-                                topics[current_topic].append(line)
-                    if current_topic:
-                        topics[current_topic] = topics[current_topic]
-                    syllabus[exam][subject] = topics
-        return syllabus
+    for root, dirs, files in os.walk(root_path):
+        # 1. Exam name from top-level folder
+        exam = os.path.basename(root)
+        if exam == "" or exam.startswith("."):  # skip hidden dirs
+            continue
 
-    syllabus = build_syllabus(extract_dir)
-    st.success("📚 Syllabus parsed successfully!")
+        for file in files:
+            if file.lower().endswith(".pdf"):
+                # 2. Subject name from PDF filename
+                subject = os.path.splitext(file)[0]
+                pdf_path = os.path.join(root, file)
+
+                pdf_lines = read_pdf_text(pdf_path)
+
+                current_topic = None
+                for line in pdf_lines:
+                    line = line.strip()
+                    if not line:
+                        continue
+
+                    # Heuristic: if line is short or has ":" treat as Topic
+                    if ':' in line or len(line.split()) <= 6:
+                        current_topic = line
+                        syllabus[exam][subject][current_topic] = []
+                    else:
+                        if current_topic:
+                            # Subtopic goes under the current topic
+                            syllabus[exam][subject][current_topic].append(line)
+
+    return syllabus
+
 
     # -------------------------------
     # 3) Calculate estimated time
