@@ -9,9 +9,12 @@ from datetime import datetime, timedelta
 st.title("📚 Adaptive Study Planner for UPSC / GATE / SSC")
 drive_link = st.text_input("Enter Google Drive file link for syllabus ZIP:")
 
+syllabus = {}
+topic_status = {}
+
 if drive_link:
     try:
-        # Extract file_id
+        # Extract file_id from Google Drive link
         file_id = drive_link.split("/d/")[1].split("/")[0]
         download_url = f"https://drive.google.com/uc?export=download&id={file_id}"
         
@@ -48,35 +51,34 @@ if drive_link:
     def build_syllabus(root_path):
         syllabus = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
 
-    for root, dirs, files in os.walk(root_path):
-        # 1. Exam name from top-level folder
-        exam = os.path.basename(root)
-        if exam == "" or exam.startswith("."):  # skip hidden dirs
-            continue
+        for root, dirs, files in os.walk(root_path):
+            exam = os.path.basename(root)
+            if exam == "" or exam.startswith("."):
+                continue
 
-        for file in files:
-            if file.lower().endswith(".pdf"):
-                # 2. Subject name from PDF filename
-                subject = os.path.splitext(file)[0]
-                pdf_path = os.path.join(root, file)
+            for file in files:
+                if file.lower().endswith(".pdf"):
+                    subject = os.path.splitext(file)[0]
+                    pdf_path = os.path.join(root, file)
+                    pdf_lines = read_pdf_text(pdf_path)
 
-                pdf_lines = read_pdf_text(pdf_path)
+                    current_topic = None
+                    for line in pdf_lines:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        # Heuristic: short lines or lines with ":" are topics
+                        if ':' in line or len(line.split()) <= 6:
+                            current_topic = line
+                            syllabus[exam][subject][current_topic] = []
+                        else:
+                            if current_topic:
+                                syllabus[exam][subject][current_topic].append(line)
 
-                current_topic = None
-                for line in pdf_lines:
-                    line = line.strip()
-                    if not line:
-                        continue
+        return syllabus
 
-                    # Heuristic: if line is short or has ":" treat as Topic
-                    if ':' in line or len(line.split()) <= 6:
-                        current_topic = line
-                        syllabus[exam][subject][current_topic] = []
-                    else:
-                        if current_topic:
-                            syllabus[exam][subject][current_topic].append(line)
-return syllabus
-
+    syllabus = build_syllabus(extract_dir)
+    st.success("📚 Syllabus parsed successfully!")
 
     # -------------------------------
     # 3) Calculate estimated time
@@ -90,12 +92,12 @@ return syllabus
                     num_lines = 1 + sum(len(s.split()) for s in subtopics)
                     base_time = num_lines * 0.1
                     mult = 1.0
-                    for kw,m in keyword_multiplier.items():
+                    for kw, m in keyword_multiplier.items():
                         if kw in topic.lower():
                             mult *= m
-                    est = round(base_time*mult,2)
-                    practice = round(est*0.3,2)
-                    topic_status[(exam,subject,topic)] = {
+                    est = round(base_time * mult, 2)
+                    practice = round(est * 0.3, 2)
+                    topic_status[(exam, subject, topic)] = {
                         "estimated_time": est,
                         "practice_time": practice,
                         "revision_time": 1,
@@ -117,7 +119,7 @@ return syllabus
     capacity = st.number_input("Enter study capacity today (hours):", min_value=1.0, value=6.0, step=0.5)
 
     # Select subjects
-    all_subjects = list({sub for _,sub,_ in topic_status})
+    all_subjects = list({sub for _, sub, _ in topic_status})
     selected_subjects = st.multiselect("Select subjects to study today:", all_subjects)
 
     if st.button("Assign Topics"):
@@ -164,7 +166,7 @@ return syllabus
         st.subheader("📊 Progress")
         st.write(f"Total: {total} | Completed: {completed} | Pending: {pending} | Delayed: {delayed}")
 
-        # Revisions
+        # Show revisions due
         now = datetime.now()
         due = []
         for k, info in topic_status.items():
