@@ -70,8 +70,8 @@ def recalc_plan(plan):
     """Recalculates all topic dates based on planned_days or actual_days"""
     current_date = plan[0]["start_date"]
     for topic in plan:
-        # Always use actual_days if set, else planned_days
-        days = topic["actual_days"] if topic["actual_days"] else topic["planned_days"]
+        # Always use actual_days if entered, else planned_days
+        days = topic["actual_days"] if topic["actual_days"] is not None else topic["planned_days"]
         topic["start_date"] = current_date
         topic["end_date"] = current_date + timedelta(days=days-1)
         current_date = topic["end_date"] + timedelta(days=1)
@@ -121,6 +121,10 @@ plan = st.session_state.subject_plan[subject_select]
 
 # Step 3: Display plan table with proper columns
 st.subheader(f"{subject_select} Plan")
+st.markdown(
+    "| Topic | Start Date | End Date | Status | Planned Days | Actual Days | Action |\n"
+    "|-------|------------|----------|--------|--------------|------------|--------|"
+)
 
 for i, topic in enumerate(plan):
     col1, col2, col3, col4, col5, col6, col7 = st.columns([3, 2, 2, 2, 2, 2, 2])
@@ -138,19 +142,20 @@ for i, topic in enumerate(plan):
         planned = st.number_input(f"", min_value=1, value=topic["planned_days"], key=planned_key)
         topic["planned_days"] = planned
     with col6:
-        # Actual Days input
+        # Actual Days input (affects dynamic recalculation immediately)
         actual_key = f"actual_{subject_select}_{i}"
-        actual_val = topic["actual_days"] if topic["actual_days"] else topic["planned_days"]
+        actual_val = topic["actual_days"] if topic["actual_days"] is not None else topic["planned_days"]
         actual = st.number_input(f"", min_value=1, value=actual_val, key=actual_key)
-        if topic["status"] == "Completed":
-            topic["actual_days"] = actual
+        # Update actual_days even if topic is not completed yet
+        topic["actual_days"] = actual
     with col7:
         # Mark Completed button
         btn_key = f"{subject_select}_{topic['topic']}_complete"
         if st.button("Mark Completed", key=btn_key):
-            mark_topic(plan, topic["topic"], actual)
+            mark_topic(plan, topic["topic"], topic["actual_days"])
             st.success(f"Marked '{topic['topic']}' completed.")
 
-# Step 4: Show dynamic subject completion date
+# Step 4: Recalculate subject end dynamically
+recalc_plan(plan)
 subject_end = calculate_subject_end(plan)
 st.subheader(f"Estimated Completion Date for {subject_select}: {subject_end.strftime('%Y-%m-%d') if subject_end else 'N/A'}")
