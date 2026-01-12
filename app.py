@@ -53,12 +53,12 @@ if drive_link:
         return lines
 
     def extract_syllabus_from_pdfs(root_dir):
-    """
-    Extract syllabus from PDFs into:
-    Exam -> Subject -> Topic -> Subtopic hierarchy
-    Filters out invalid subject lines like '(Cmm).' or '(Nmo'
-    """
-    syllabus = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+        """
+        Extract syllabus from PDFs into:
+        Exam -> Subject -> Topic -> Subtopic hierarchy
+        Filters out invalid subject lines like '(Cmm).' or '(Nmo'
+        """
+        syllabus = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
 
     # Known subjects heuristic (optional, can extend)
     known_subjects_keywords = [
