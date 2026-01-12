@@ -41,7 +41,7 @@ TOTAL_HOURS = 6  # hours per day
 # -----------------------------------
 st.set_page_config(page_title="Adaptive Study Planner")
 st.title("📘 Adaptive Study Planner")
-st.caption("Exam → Subject → Topic → Day-wise personalized plan")
+st.caption("Select Exam → Subject → Topic → Set Coverage → Get Day-wise Plan")
 
 # -----------------------------------
 # EXAM SELECTION
@@ -63,17 +63,27 @@ if "current_exam" not in st.session_state or st.session_state.current_exam != ex
             st.session_state.Q[key] = 0.0
 
 # -----------------------------------
-# TOPIC PROGRESS INPUT
+# SUBJECT DROPDOWN
 # -----------------------------------
-st.subheader("📊 Topic Coverage (%)")
+subject_selected = st.selectbox("Select Subject", list(subjects.keys()))
+topics = subjects[subject_selected]
 
-for subject, topics in subjects.items():
-    st.markdown(f"### {subject}")
-    for topic in topics:
-        key = f"{subject}::{topic}"
-        st.session_state.topic_progress[key] = st.slider(
-            topic, 0, 100, st.session_state.topic_progress.get(key, 0)
-        )
+# -----------------------------------
+# TOPIC DROPDOWN
+# -----------------------------------
+topic_selected = st.selectbox("Select Topic", topics)
+topic_key = f"{subject_selected}::{topic_selected}"
+
+# -----------------------------------
+# COVERAGE INPUT
+# -----------------------------------
+st.subheader("Set Topic Coverage (%)")
+st.session_state.topic_progress[topic_key] = st.slider(
+    f"{topic_selected} Coverage",
+    0,
+    100,
+    st.session_state.topic_progress.get(topic_key, 0)
+)
 
 # -----------------------------------
 # GENERATE STUDY PLAN
@@ -95,7 +105,7 @@ if st.button("Generate Day-wise Study Plan"):
     # -----------------------------------
     # CLUSTERING (SKILL LEVEL)
     # -----------------------------------
-    if len(df) >= 3:  # KMeans needs at least 3 samples for 3 clusters
+    if len(df) >= 3:
         kmeans = KMeans(n_clusters=3, random_state=42)
         df["Cluster"] = kmeans.fit_predict(df[["Coverage (%)"]])
         cluster_means = df.groupby("Cluster")["Coverage (%)"].mean().sort_values()
@@ -104,17 +114,14 @@ if st.button("Generate Day-wise Study Plan"):
         )}
         df["Skill Level"] = df["Cluster"].map(skill_map)
     else:
-        # fallback for small number of topics
         df["Skill Level"] = ["Beginner" if x < 50 else "Intermediate" if x < 80 else "Advanced" for x in df["Coverage (%)"]]
 
     # -----------------------------------
-    # CALCULATE DAILY HOURS & DAYS NEEDED
+    # DAILY HOURS & DAYS NEEDED
     # -----------------------------------
     df["Daily Study Hours"] = (df["RL Priority"] / df["RL Priority"].sum()) * TOTAL_HOURS
-    # Assume each topic requires 10 study hours as base
-    df["Hours Needed"] = 10  # you can make this dynamic
+    df["Hours Needed"] = 10  # base hours per topic
     df["Days Needed"] = (df["Hours Needed"] / df["Daily Study Hours"]).apply(np.ceil).replace(np.inf, 1)
-
     df = df.sort_values("Days Needed", ascending=False)
 
     # -----------------------------------
