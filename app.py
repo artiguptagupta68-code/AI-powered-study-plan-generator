@@ -75,7 +75,7 @@ if drive_link:
                     else:
                         if current_topic:
                             syllabus[exam][subject][current_topic].append(line)
-                            return syllabus
+return syllabus
 
 
     # -------------------------------
