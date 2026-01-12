@@ -1,5 +1,7 @@
 streamlit
-requests
-beautifulsoup4
+
+
 numpy
 pandas
+
+PyMuPDF==1.22.5
