@@ -1,190 +1,130 @@
 import streamlit as st
-from dataclasses import dataclass, field
-from typing import List
-import requests
-from bs4 import BeautifulSoup
+import zipfile, os, fitz
 
-st.set_page_config(page_title="Dynamic Study Planner", layout="wide")
+# ---------------- CONFIG ----------------
+ZIP_PATH = r"C:\Users\ASUS\Downloads\plan.zip"
+EXTRACT_PATH = "syllabus_data"
 
-# ---------------- DATA MODELS ---------------- #
+# ----------------- EXTRACT ZIP -----------------
+def extract_zip():
+    if not os.path.exists(EXTRACT_PATH):
+        os.makedirs(EXTRACT_PATH, exist_ok=True)
+        with zipfile.ZipFile(ZIP_PATH, 'r') as z:
+            z.extractall(EXTRACT_PATH)
 
-@dataclass
-class SubTopic:
-    name: str
-    study: int
-    free: int
-    practice: int
-    status: str = "Pending"
+# ----------------- READ PDFs -----------------
+def read_pdf_text(path):
+    doc = fitz.open(path)
+    text = ""
+    for p in doc:
+        text += p.get_text()
+    # Split by line and remove empty lines
+    lines = [line.strip() for line in text.split("\n") if line.strip()]
+    return lines
 
-    @property
-    def total_time(self):
-        return self.study + self.free + self.practice
+# ----------------- BUILD SYLLABUS -----------------
+def build_syllabus():
+    syllabus = {}
+    for root, dirs, files in os.walk(EXTRACT_PATH):
+        for file in files:
+            if file.endswith(".pdf"):
+                exam = os.path.basename(root)
+                if exam not in syllabus:
+                    syllabus[exam] = {}
+                subject = os.path.splitext(file)[0]
+                lines = read_pdf_text(os.path.join(root, file))
+                
+                # Very basic parsing: first line -> topic, rest -> subtopics
+                topics = {}
+                current_topic = None
+                sub_list = []
+                for line in lines:
+                    # Heuristic: if line ends with "Syllabus" or similar, treat as topic
+                    if len(line.split()) <= 6:
+                        if current_topic:
+                            topics[current_topic] = sub_list
+                        current_topic = line
+                        sub_list = []
+                    else:
+                        sub_list.append(line)
+                if current_topic:
+                    topics[current_topic] = sub_list
+                syllabus[exam][subject] = topics
+    return syllabus
 
+# ----------------- STATUS TRACKER -----------------
+status = {}  # (exam, subject, topic, subtopic) -> pending/completed/delayed
 
-@dataclass
-class Topic:
-    name: str
-    subtopics: List[SubTopic] = field(default_factory=list)
+def init_status(syllabus):
+    for exam, subjects in syllabus.items():
+        for subject, topics in subjects.items():
+            for topic, subtopics in topics.items():
+                for sub in subtopics:
+                    status[(exam, subject, topic, sub)] = "pending"
 
-    def next_subtopic(self):
-        for s in self.subtopics:
-            if s.status != "Completed":
-                return s
-        return None
+# ----------------- ASSIGN / COMPLETE LOGIC -----------------
+def get_pending_subtopics():
+    return [k for k,v in status.items() if v=="pending"]
 
-
-@dataclass
-class Subject:
-    name: str
-    topics: List[Topic]
-    revision: int
-
-    @property
-    def total_time(self):
-        return sum(
-            s.total_time
-            for t in self.topics
-            for s in t.subtopics
-        ) + self.revision
-
-
-@dataclass
-class Exam:
-    name: str
-    subjects: List[Subject]
-
-
-# ---------------- UTILS ---------------- #
-
-def load_syllabus_from_url(url):
-    try:
-        r = requests.get(url, timeout=10)
-        soup = BeautifulSoup(r.text, "html.parser")
-        return [li.text.strip() for li in soup.find_all("li")[:20]]
-    except:
-        return []
-
-
-def assign_tasks(subjects, capacity):
+def assign_subtopics(capacity):
     assigned = []
-    remaining = capacity
-
-    for subject in subjects:
-        for topic in subject.topics:
-            sub = topic.next_subtopic()
-            if sub and sub.total_time <= remaining:
-                assigned.append((subject, topic, sub))
-                sub.status = "In Progress"
-                remaining -= sub.total_time
-
+    used = 0
+    for k in get_pending_subtopics():
+        if used + 2 <= capacity:  # assume 2 hours per subtopic
+            assigned.append(k)
+            used += 2
+        else:
+            break
     return assigned
 
+def mark_completed(subtopic_key):
+    status[subtopic_key] = "completed"
 
-# ---------------- SESSION STATE ---------------- #
+def add_delay(subtopic_key):
+    status[subtopic_key] = "delayed"
 
-if "exam" not in st.session_state:
-    st.session_state.exam = None
+def progress_stats():
+    total = len(status)
+    completed = len([v for v in status.values() if v=="completed"])
+    return total, completed
 
-# ---------------- UI ---------------- #
+# ----------------- STREAMLIT UI -----------------
+st.set_page_config("Adaptive Study Planner", layout="wide")
+st.title("📘 Adaptive Study Planner (ZIP PDFs → In-Memory)")
 
-st.title("📚 Dynamic UPSC / GATE / SSC Study Planner")
+extract_zip()
+syllabus = build_syllabus()
+init_status(syllabus)
 
-# ----------- EXAM CREATION ----------- #
+menu = st.sidebar.selectbox("Navigation", ["Daily Planner", "Progress Dashboard"])
 
-with st.sidebar:
-    st.header("⚙️ Setup")
+# ----------------- DAILY PLANNER -----------------
+if menu == "Daily Planner":
+    st.header("📅 Today's Study Plan")
+    capacity = st.number_input("Your study capacity today (hours)", min_value=1, max_value=16, value=6)
+    
+    assigned = assign_subtopics(capacity)
+    
+    st.subheader("📌 Assigned Subtopics")
+    for k in assigned:
+        exam, subject, topic, sub = k
+        col1, col2, col3 = st.columns([4,1,1])
+        col1.write(f"{exam} > {subject} > {topic} > {sub}")
+        if col2.button("✅ Done", key=f"done{k}"):
+            mark_completed(k)
+            st.experimental_rerun()
+        if col3.button("⏱ Delay", key=f"delay{k}"):
+            add_delay(k)
+            st.warning("Delay added")
 
-    exam_name = st.text_input("Exam Name", "UPSC")
-
-    if st.button("Create Exam"):
-        st.session_state.exam = Exam(exam_name, [])
-        st.success("Exam created")
-
-# ----------- SUBJECT CREATION ----------- #
-
-if st.session_state.exam:
-    st.subheader(f"🎯 Exam: {st.session_state.exam.name}")
-
-    with st.expander("➕ Add Subject"):
-        sub_name = st.text_input("Subject Name")
-        revision = st.number_input("Revision Time (hrs)", 0, 50, 3)
-
-        if st.button("Add Subject"):
-            st.session_state.exam.subjects.append(
-                Subject(sub_name, [], revision)
-            )
-            st.success("Subject added")
-
-# ----------- TOPIC & SUBTOPIC ----------- #
-
-for subject in st.session_state.exam.subjects if st.session_state.exam else []:
-    with st.expander(f"📘 {subject.name} (Total: {subject.total_time} hrs)"):
-
-        topic_name = st.text_input(f"Topic name for {subject.name}", key=subject.name)
-        if st.button("Add Topic", key=f"add_{subject.name}"):
-            subject.topics.append(Topic(topic_name))
-            st.success("Topic added")
-
-        for topic in subject.topics:
-            st.markdown(f"### 🔹 {topic.name}")
-
-            c1, c2, c3 = st.columns(3)
-            sub_name = c1.text_input("Subtopic", key=f"{topic.name}_name")
-            study = c2.number_input("Study hrs", 0, 20, 2, key=f"{topic.name}_study")
-            practice = c3.number_input("Practice hrs", 0, 20, 1, key=f"{topic.name}_prac")
-            free = st.number_input("Free days", 0, 10, 1, key=f"{topic.name}_free")
-
-            if st.button("Add Subtopic", key=f"{topic.name}_add"):
-                topic.subtopics.append(SubTopic(sub_name, study, free, practice))
-                st.success("Subtopic added")
-
-            for s in topic.subtopics:
-                st.write(
-                    f"➡️ {s.name} | ⏱ {s.total_time} hrs | 📌 {s.status}"
-                )
-
-# ----------- DAILY STUDY ALLOCATION ----------- #
-
-st.subheader("🗓️ Daily Study Allocation")
-
-daily_capacity = st.number_input("Daily Study Capacity (hrs)", 1, 24, 6)
-
-if st.button("Assign Today's Study"):
-    tasks = assign_tasks(st.session_state.exam.subjects, daily_capacity)
-    if tasks:
-        st.success("Tasks assigned")
-        for subj, top, sub in tasks:
-            st.write(f"✅ {subj.name} → {top.name} → {sub.name}")
-    else:
-        st.warning("No tasks available")
-
-# ----------- UPDATE PROGRESS ----------- #
-
-st.subheader("🔄 Update Progress")
-
-for subject in st.session_state.exam.subjects if st.session_state.exam else []:
-    for topic in subject.topics:
-        for sub in topic.subtopics:
-            if sub.status == "In Progress":
-                col1, col2 = st.columns(2)
-                if col1.button(f"✔ Complete {sub.name}"):
-                    sub.status = "Completed"
-                    st.success("Marked Completed")
-                if col2.button(f"⏳ Delay {sub.name}"):
-                    sub.free += 1
-                    sub.status = "Pending"
-                    st.warning("Extended by 1 day")
-
-# ----------- SYLLABUS FETCH ----------- #
-
-st.subheader("🌐 Load Syllabus from Website")
-
-url = st.text_input("Syllabus URL")
-if st.button("Fetch Syllabus"):
-    syllabus = load_syllabus_from_url(url)
-    if syllabus:
-        st.success("Syllabus loaded")
-        for item in syllabus:
-            st.write("•", item)
-    else:
-        st.error("Could not fetch syllabus")
+# ----------------- PROGRESS DASHBOARD -----------------
+else:
+    st.header("📊 Progress Dashboard")
+    total, completed = progress_stats()
+    st.metric("Total Subtopics", total)
+    st.metric("Completed", completed)
+    st.progress(completed / total if total else 0)
+    
+    st.subheader("Pending Subtopics")
+    for k in get_pending_subtopics():
+        st.write(" > ".join(k))
