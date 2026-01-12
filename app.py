@@ -46,7 +46,7 @@ if drive_link:
         return lines
 
     def build_syllabus(root_path):
-    syllabus = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+        syllabus = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
 
     for root, dirs, files in os.walk(root_path):
         # 1. Exam name from top-level folder
