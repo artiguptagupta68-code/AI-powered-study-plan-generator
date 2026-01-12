@@ -3,5 +3,5 @@ streamlit
 
 numpy
 pandas
-
+fitz
 PyMuPDF==1.22.5
