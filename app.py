@@ -4,25 +4,29 @@ import numpy as np
 from sklearn.cluster import KMeans
 
 # -----------------------------------
-# SYLLABUS DATA
+# SYLLABUS STRUCTURE
 # -----------------------------------
 SYLLABUS = {
-    "UPSC": [
-        "Polity", "History", "Geography",
-        "Economy", "Environment", "Science & Tech"
-    ],
-    "SSC": [
-        "Quantitative Aptitude",
-        "Reasoning",
-        "English",
-        "General Awareness"
-    ],
-    "GATE": [
-        "Engineering Mathematics",
-        "Core Subject 1",
-        "Core Subject 2",
-        "General Aptitude"
-    ]
+    "UPSC": {
+        "Polity": ["Constitution", "Parliament", "Judiciary"],
+        "History": ["Ancient", "Medieval", "Modern"],
+        "Geography": ["Physical", "Indian", "World"],
+        "Economy": ["Budget", "Survey", "Planning"],
+        "Environment": ["Ecology", "Climate Change"],
+        "Science & Tech": ["Biotech", "Space", "IT"]
+    },
+    "SSC": {
+        "Quantitative Aptitude": ["Percentage", "Profit & Loss", "Algebra"],
+        "Reasoning": ["Analogy", "Series", "Puzzles"],
+        "English": ["Grammar", "Vocabulary", "Comprehension"],
+        "General Awareness": ["History", "Geography", "Current Affairs"]
+    },
+    "GATE": {
+        "Engineering Mathematics": ["Calculus", "Linear Algebra"],
+        "Core Subject 1": ["Topic 1", "Topic 2"],
+        "Core Subject 2": ["Advanced Topic"],
+        "General Aptitude": ["Verbal", "Numerical"]
+    }
 }
 
 # -----------------------------------
@@ -35,17 +39,14 @@ TOTAL_HOURS = 6
 # -----------------------------------
 # STREAMLIT CONFIG
 # -----------------------------------
-st.set_page_config(page_title="Adaptive AI Study Planner")
-st.title("🎯 Adaptive AI Study Planner")
-st.caption(
-    "Tailors learning based on performance for UPSC, SSC & GATE aspirants"
-)
+st.set_page_config(page_title="Adaptive Study Planner")
+st.title("📘 Adaptive Study Planner")
+st.caption("Exam → Subject → Topic → Day-wise personalized plan")
 
 # -----------------------------------
 # EXAM SELECTION
 # -----------------------------------
 exam = st.selectbox("Select Exam", list(SYLLABUS.keys()))
-
 subjects = SYLLABUS[exam]
 
 # -----------------------------------
@@ -53,78 +54,68 @@ subjects = SYLLABUS[exam]
 # -----------------------------------
 if "current_exam" not in st.session_state or st.session_state.current_exam != exam:
     st.session_state.current_exam = exam
-    st.session_state.accuracy = {s: 50 for s in subjects}
-    st.session_state.Q = np.zeros(len(subjects))
+    st.session_state.topic_progress = {}
+    st.session_state.Q = {}
+
+    for subject, topics in subjects.items():
+        for topic in topics:
+            st.session_state.topic_progress[f"{subject}::{topic}"] = 0
+            st.session_state.Q[f"{subject}::{topic}"] = 0.0
 
 # -----------------------------------
-# PERFORMANCE INPUT
+# TOPIC PROGRESS INPUT
 # -----------------------------------
-st.subheader("📊 Current Performance (%)")
+st.subheader("📊 Topic Coverage (%)")
 
-for s in subjects:
-    st.session_state.accuracy[s] = st.slider(
-        s,
-        0,
-        100,
-        st.session_state.accuracy[s]
-    )
-
-# -----------------------------------
-# MOCK TEST UPDATE
-# -----------------------------------
-st.subheader("🧪 Update After Mock Test")
-
-new_accuracy = {}
-for s in subjects:
-    new_accuracy[s] = st.number_input(
-        f"{s} (Post-Test Accuracy)",
-        0,
-        100,
-        st.session_state.accuracy[s],
-        step=1
-    )
+for subject, topics in subjects.items():
+    st.markdown(f"### {subject}")
+    for topic in topics:
+        key = f"{subject}::{topic}"
+        st.session_state.topic_progress[key] = st.slider(
+            topic, 0, 100, st.session_state.topic_progress[key]
+        )
 
 # -----------------------------------
 # UPDATE STUDY PLAN
 # -----------------------------------
-if st.button("Update Personalized Study Plan"):
+if st.button("Generate Day-wise Study Plan"):
+
+    data = []
 
     # RL UPDATE
-    for i, subject in enumerate(subjects):
-        reward = new_accuracy[subject] - st.session_state.accuracy[subject]
-
-        st.session_state.Q[i] = st.session_state.Q[i] + ALPHA * (
-            reward + GAMMA * np.max(st.session_state.Q) - st.session_state.Q[i]
+    for key, progress in st.session_state.topic_progress.items():
+        reward = (100 - progress) / 100
+        st.session_state.Q[key] = st.session_state.Q[key] + ALPHA * (
+            reward + GAMMA * max(st.session_state.Q.values()) - st.session_state.Q[key]
         )
 
-        st.session_state.accuracy[subject] = new_accuracy[subject]
+        subject, topic = key.split("::")
+        data.append([subject, topic, progress, st.session_state.Q[key]])
 
-    # DATAFRAME
-    df = pd.DataFrame({
-        "Subject": subjects,
-        "Accuracy": list(st.session_state.accuracy.values()),
-        "RL Score": st.session_state.Q
-    })
+    df = pd.DataFrame(
+        data,
+        columns=["Subject", "Topic", "Coverage (%)", "RL Priority"]
+    )
 
     # -----------------------------------
-    # CLUSTERING
+    # CLUSTERING (TOPIC SKILL LEVEL)
     # -----------------------------------
     kmeans = KMeans(n_clusters=3, random_state=42)
-    df["Cluster"] = kmeans.fit_predict(df[["Accuracy"]])
+    df["Cluster"] = kmeans.fit_predict(df[["Coverage (%)"]])
 
-    cluster_means = df.groupby("Cluster")["Accuracy"].mean().sort_values()
-    skill_labels = ["Beginner", "Intermediate", "Advanced"]
+    cluster_means = df.groupby("Cluster")["Coverage (%)"].mean().sort_values()
+    skill_map = {cluster: label for cluster, label in zip(
+        cluster_means.index,
+        ["Beginner", "Intermediate", "Advanced"]
+    )}
 
-    df["Skill Level"] = df["Cluster"].map({
-        cluster: skill_labels[i]
-        for i, cluster in enumerate(cluster_means.index)
-    })
+    df["Skill Level"] = df["Cluster"].map(skill_map)
 
     # -----------------------------------
-    # STUDY HOURS ALLOCATION
+    # DAY-WISE STUDY ALLOCATION
     # -----------------------------------
     df["Daily Study Hours"] = (
-        df["RL Score"] / df["RL Score"].sum()
+        df["RL Priority"] / df["RL Priority"].sum()
     ) * TOTAL_HOURS
 
     df = df.sort_values("Daily Study Hours", ascending=False)
@@ -132,11 +123,12 @@ if st.button("Update Personalized Study Plan"):
     # -----------------------------------
     # OUTPUT
     # -----------------------------------
-    st.subheader("📅 Updated Adaptive Study Plan")
+    st.subheader("📅 Day-wise Personalized Study Plan")
     st.dataframe(
         df[[
             "Subject",
-            "Accuracy",
+            "Topic",
+            "Coverage (%)",
             "Skill Level",
             "Daily Study Hours"
         ]].round(2)
@@ -145,34 +137,12 @@ if st.button("Update Personalized Study Plan"):
     # -----------------------------------
     # INSIGHTS
     # -----------------------------------
-    st.subheader("🧠 AI Insights")
+    st.subheader("🧠 Learning Insights")
 
     for _, row in df.iterrows():
         if row["Skill Level"] == "Beginner":
-            st.error(f"🔴 {row['Subject']} needs intensive focus")
+            st.error(f"🔴 {row['Subject']} → {row['Topic']}")
         elif row["Skill Level"] == "Intermediate":
-            st.warning(f"🟡 {row['Subject']} improving steadily")
+            st.warning(f"🟡 {row['Subject']} → {row['Topic']}")
         else:
-            st.success(f"🟢 {row['Subject']} well prepared")
-
-# -----------------------------------
-# MONETIZATION SECTION
-# -----------------------------------
-st.markdown("---")
-st.subheader("💳 Monetization Strategy")
-
-st.write("""
-This platform can be monetized through a **subscription-based model**:
-
-• **Free Tier**
-  - Manual study plan
-  - Limited updates
-
-• **Premium Tier**
-  - Reinforcement learning based adaptation
-  - Performance tracking over time
-  - Skill clustering & insights
-  - Personalized alerts & reminders
-
-This makes the solution scalable for UPSC, SSC & GATE aspirants.
-""")
+            st.success(f"🟢 {row['Subject']} → {row['Topic']}")
