@@ -74,7 +74,6 @@ if drive_link:
                         syllabus[exam][subject][current_topic] = []
                     else:
                         if current_topic:
-                            # Subtopic goes under the current topic
                             syllabus[exam][subject][current_topic].append(line)
                             return syllabus
 
