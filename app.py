@@ -143,7 +143,7 @@ if drive_link:
     capacity = st.number_input("Enter study capacity today (hours):", min_value=1.0, value=6.0, step=0.5)
 
     # Select subjects
-    all_subjects = sorted({sub for _, sub, _ in topic_status})
+    all_subjects = sorted({sub for , sub,  in topic_status})
     selected_subjects = st.multiselect("Select subjects to study today:", all_subjects)
 
     if st.button("Assign Topics"):
