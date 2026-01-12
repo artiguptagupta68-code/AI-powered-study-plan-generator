@@ -1,28 +1,23 @@
 import streamlit as st
-import zipfile, os, fitz
+import zipfile, os
+import fitz  # PyMuPDF
 
 # ---------------- CONFIG ----------------
-ZIP_PATH = r"C:\Users\ASUS\Downloads\plan.zip"
 EXTRACT_PATH = "syllabus_data"
+os.makedirs(EXTRACT_PATH, exist_ok=True)
 
-# ----------------- EXTRACT ZIP -----------------
-def extract_zip():
-    if not os.path.exists(EXTRACT_PATH):
-        os.makedirs(EXTRACT_PATH, exist_ok=True)
-        with zipfile.ZipFile(ZIP_PATH, 'r') as z:
-            z.extractall(EXTRACT_PATH)
-
-# ----------------- READ PDFs -----------------
+# ---------------- PDF READING ----------------
 def read_pdf_text(path):
+    """Read PDF and return lines as list"""
     doc = fitz.open(path)
-    text = ""
-    for p in doc:
-        text += p.get_text()
-    # Split by line and remove empty lines
-    lines = [line.strip() for line in text.split("\n") if line.strip()]
+    lines = []
+    for page in doc:
+        for line in page.get_text("text").split("\n"):
+            if line.strip():
+                lines.append(line.strip())
     return lines
 
-# ----------------- BUILD SYLLABUS -----------------
+# ---------------- BUILD SYLLABUS ----------------
 def build_syllabus():
     syllabus = {}
     for root, dirs, files in os.walk(EXTRACT_PATH):
@@ -34,12 +29,11 @@ def build_syllabus():
                 subject = os.path.splitext(file)[0]
                 lines = read_pdf_text(os.path.join(root, file))
                 
-                # Very basic parsing: first line -> topic, rest -> subtopics
+                # Simple parsing: lines of length <=6 -> topic, rest -> subtopics
                 topics = {}
                 current_topic = None
                 sub_list = []
                 for line in lines:
-                    # Heuristic: if line ends with "Syllabus" or similar, treat as topic
                     if len(line.split()) <= 6:
                         if current_topic:
                             topics[current_topic] = sub_list
@@ -52,8 +46,8 @@ def build_syllabus():
                 syllabus[exam][subject] = topics
     return syllabus
 
-# ----------------- STATUS TRACKER -----------------
-status = {}  # (exam, subject, topic, subtopic) -> pending/completed/delayed
+# ---------------- STATUS TRACKER ----------------
+status = {}
 
 def init_status(syllabus):
     for exam, subjects in syllabus.items():
@@ -62,7 +56,7 @@ def init_status(syllabus):
                 for sub in subtopics:
                     status[(exam, subject, topic, sub)] = "pending"
 
-# ----------------- ASSIGN / COMPLETE LOGIC -----------------
+# ---------------- LOGIC ----------------
 def get_pending_subtopics():
     return [k for k,v in status.items() if v=="pending"]
 
@@ -70,7 +64,7 @@ def assign_subtopics(capacity):
     assigned = []
     used = 0
     for k in get_pending_subtopics():
-        if used + 2 <= capacity:  # assume 2 hours per subtopic
+        if used + 2 <= capacity:  # each subtopic ~2 hours
             assigned.append(k)
             used += 2
         else:
@@ -88,21 +82,33 @@ def progress_stats():
     completed = len([v for v in status.values() if v=="completed"])
     return total, completed
 
-# ----------------- STREAMLIT UI -----------------
+# ---------------- STREAMLIT UI ----------------
 st.set_page_config("Adaptive Study Planner", layout="wide")
-st.title("📘 Adaptive Study Planner (ZIP PDFs → In-Memory)")
+st.title("📘 Adaptive Study Planner (ZIP PDF Upload)")
 
-extract_zip()
-syllabus = build_syllabus()
-init_status(syllabus)
+menu = st.sidebar.selectbox("Navigation", ["Upload Syllabus ZIP", "Daily Planner", "Progress Dashboard"])
 
-menu = st.sidebar.selectbox("Navigation", ["Daily Planner", "Progress Dashboard"])
-
-# ----------------- DAILY PLANNER -----------------
-if menu == "Daily Planner":
+# ---------------- UPLOAD ZIP ----------------
+if menu == "Upload Syllabus ZIP":
+    st.header("📂 Upload your syllabus ZIP")
+    uploaded_file = st.file_uploader("Upload ZIP file containing PDFs", type=["zip"])
+    if uploaded_file is not None:
+        zip_path = os.path.join(EXTRACT_PATH, "plan.zip")
+        with open(zip_path, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+        # Extract ZIP
+        with zipfile.ZipFile(zip_path, 'r') as z:
+            z.extractall(EXTRACT_PATH)
+        st.success("ZIP extracted successfully!")
+        st.info("Go to Daily Planner to generate study plan")
+        
+# ---------------- DAILY PLANNER ----------------
+elif menu == "Daily Planner":
     st.header("📅 Today's Study Plan")
-    capacity = st.number_input("Your study capacity today (hours)", min_value=1, max_value=16, value=6)
+    syllabus = build_syllabus()
+    init_status(syllabus)
     
+    capacity = st.number_input("Your study capacity today (hours)", min_value=1, max_value=16, value=6)
     assigned = assign_subtopics(capacity)
     
     st.subheader("📌 Assigned Subtopics")
@@ -117,7 +123,7 @@ if menu == "Daily Planner":
             add_delay(k)
             st.warning("Delay added")
 
-# ----------------- PROGRESS DASHBOARD -----------------
+# ---------------- PROGRESS DASHBOARD ----------------
 else:
     st.header("📊 Progress Dashboard")
     total, completed = progress_stats()
