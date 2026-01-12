@@ -54,6 +54,7 @@ if drive_link:
 
     def extract_syllabus_from_pdfs(root_dir):
         syllabus = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+
         for root, dirs, files in os.walk(root_dir):
             for file in files:
                 if not file.lower().endswith(".pdf"):
@@ -84,19 +85,24 @@ if drive_link:
                     if not line:
                         continue
 
-                    # Subject heuristic
+                    # Subject heuristic: uppercase, <=5 words
                     if line.isupper() and len(line.split()) <= 5:
                         current_subject = line.title()
                         continue
 
-                    # Topic heuristic
+                    # Topic heuristic: short line, contains ":" or numbered
                     if (len(line.split()) <= 6 and ":" in line) or any(c.isdigit() for c in line[:3]):
                         current_topic = line
+                        # Use default subject if none detected
+                        if not current_subject:
+                            current_subject = "General"
                         syllabus[exam][current_subject][current_topic] = []
                         continue
 
                     # Subtopic
-                    if current_subject and current_topic:
+                    if current_topic:
+                        if not current_subject:
+                            current_subject = "General"
                         syllabus[exam][current_subject][current_topic].append(line)
 
         return syllabus
@@ -143,7 +149,7 @@ if drive_link:
     capacity = st.number_input("Enter study capacity today (hours):", min_value=1.0, value=6.0, step=0.5)
 
     # Select subjects
-    all_subjects = sorted({sub for , sub,  in topic_status})
+    all_subjects = sorted({sub for _, sub, _ in topic_status if sub is not None})
     selected_subjects = st.multiselect("Select subjects to study today:", all_subjects)
 
     if st.button("Assign Topics"):
