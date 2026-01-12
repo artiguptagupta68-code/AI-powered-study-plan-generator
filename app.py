@@ -34,7 +34,7 @@ SYLLABUS = {
 # -----------------------------------
 ALPHA = 0.2
 GAMMA = 0.9
-TOTAL_HOURS = 6
+TOTAL_HOURS = 6  # hours per day
 
 # -----------------------------------
 # STREAMLIT CONFIG
@@ -50,17 +50,17 @@ exam = st.selectbox("Select Exam", list(SYLLABUS.keys()))
 subjects = SYLLABUS[exam]
 
 # -----------------------------------
-# RESET STATE ON EXAM CHANGE
+# INITIALIZE SESSION STATE
 # -----------------------------------
 if "current_exam" not in st.session_state or st.session_state.current_exam != exam:
     st.session_state.current_exam = exam
     st.session_state.topic_progress = {}
     st.session_state.Q = {}
-
     for subject, topics in subjects.items():
         for topic in topics:
-            st.session_state.topic_progress[f"{subject}::{topic}"] = 0
-            st.session_state.Q[f"{subject}::{topic}"] = 0.0
+            key = f"{subject}::{topic}"
+            st.session_state.topic_progress[key] = 0
+            st.session_state.Q[key] = 0.0
 
 # -----------------------------------
 # TOPIC PROGRESS INPUT
@@ -72,77 +72,68 @@ for subject, topics in subjects.items():
     for topic in topics:
         key = f"{subject}::{topic}"
         st.session_state.topic_progress[key] = st.slider(
-            topic, 0, 100, st.session_state.topic_progress[key]
+            topic, 0, 100, st.session_state.topic_progress.get(key, 0)
         )
 
 # -----------------------------------
-# UPDATE STUDY PLAN
+# GENERATE STUDY PLAN
 # -----------------------------------
 if st.button("Generate Day-wise Study Plan"):
 
     data = []
-
-    # RL UPDATE
+    # RL UPDATE & Data collection
     for key, progress in st.session_state.topic_progress.items():
         reward = (100 - progress) / 100
-        st.session_state.Q[key] = st.session_state.Q[key] + ALPHA * (
+        st.session_state.Q[key] += ALPHA * (
             reward + GAMMA * max(st.session_state.Q.values()) - st.session_state.Q[key]
         )
-
         subject, topic = key.split("::")
         data.append([subject, topic, progress, st.session_state.Q[key]])
 
-    df = pd.DataFrame(
-        data,
-        columns=["Subject", "Topic", "Coverage (%)", "RL Priority"]
-    )
+    df = pd.DataFrame(data, columns=["Subject", "Topic", "Coverage (%)", "RL Priority"])
 
     # -----------------------------------
-    # CLUSTERING (TOPIC SKILL LEVEL)
+    # CLUSTERING (SKILL LEVEL)
     # -----------------------------------
-    kmeans = KMeans(n_clusters=3, random_state=42)
-    df["Cluster"] = kmeans.fit_predict(df[["Coverage (%)"]])
-
-    cluster_means = df.groupby("Cluster")["Coverage (%)"].mean().sort_values()
-    skill_map = {cluster: label for cluster, label in zip(
-        cluster_means.index,
-        ["Beginner", "Intermediate", "Advanced"]
-    )}
-
-    df["Skill Level"] = df["Cluster"].map(skill_map)
-
-    # -----------------------------------
-    # DAY-WISE STUDY ALLOCATION
-    # -----------------------------------
-    df["Daily Study Hours"] = (
-        df["RL Priority"] / df["RL Priority"].sum()
-    ) * TOTAL_HOURS
-
-    df = df.sort_values("Daily Study Hours", ascending=False)
+    if len(df) >= 3:  # KMeans needs at least 3 samples for 3 clusters
+        kmeans = KMeans(n_clusters=3, random_state=42)
+        df["Cluster"] = kmeans.fit_predict(df[["Coverage (%)"]])
+        cluster_means = df.groupby("Cluster")["Coverage (%)"].mean().sort_values()
+        skill_map = {cluster: label for cluster, label in zip(
+            cluster_means.index, ["Beginner", "Intermediate", "Advanced"]
+        )}
+        df["Skill Level"] = df["Cluster"].map(skill_map)
+    else:
+        # fallback for small number of topics
+        df["Skill Level"] = ["Beginner" if x < 50 else "Intermediate" if x < 80 else "Advanced" for x in df["Coverage (%)"]]
 
     # -----------------------------------
-    # OUTPUT
+    # CALCULATE DAILY HOURS & DAYS NEEDED
+    # -----------------------------------
+    df["Daily Study Hours"] = (df["RL Priority"] / df["RL Priority"].sum()) * TOTAL_HOURS
+    # Assume each topic requires 10 study hours as base
+    df["Hours Needed"] = 10  # you can make this dynamic
+    df["Days Needed"] = (df["Hours Needed"] / df["Daily Study Hours"]).apply(np.ceil).replace(np.inf, 1)
+
+    df = df.sort_values("Days Needed", ascending=False)
+
+    # -----------------------------------
+    # DISPLAY DATAFRAME
     # -----------------------------------
     st.subheader("📅 Day-wise Personalized Study Plan")
     st.dataframe(
-        df[[
-            "Subject",
-            "Topic",
-            "Coverage (%)",
-            "Skill Level",
-            "Daily Study Hours"
-        ]].round(2)
+        df[["Subject", "Topic", "Coverage (%)", "Skill Level", "Daily Study Hours", "Days Needed"]].round(2)
     )
 
     # -----------------------------------
-    # INSIGHTS
+    # FLASHCARD STYLE INSIGHTS
     # -----------------------------------
     st.subheader("🧠 Learning Insights")
-
     for _, row in df.iterrows():
+        msg = f"{row['Subject']} → {row['Topic']} (Complete in {int(row['Days Needed'])} days)"
         if row["Skill Level"] == "Beginner":
-            st.error(f"🔴 {row['Subject']} → {row['Topic']}")
+            st.error(f"🔴 {msg}")
         elif row["Skill Level"] == "Intermediate":
-            st.warning(f"🟡 {row['Subject']} → {row['Topic']}")
+            st.warning(f"🟡 {msg}")
         else:
-            st.success(f"🟢 {row['Subject']} → {row['Topic']}")
+            st.success(f"🟢 {msg}")
