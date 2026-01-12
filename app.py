@@ -67,9 +67,10 @@ def generate_subject_plan(subject_topics, start_date):
     return plan
 
 def recalc_plan(plan):
-    """Recalculates all topic dates based on planned_days and actual_days"""
+    """Recalculates all topic dates based on planned_days or actual_days"""
     current_date = plan[0]["start_date"]
     for topic in plan:
+        # Always use actual_days if set, else planned_days
         days = topic["actual_days"] if topic["actual_days"] else topic["planned_days"]
         topic["start_date"] = current_date
         topic["end_date"] = current_date + timedelta(days=days-1)
@@ -132,13 +133,20 @@ for i, topic in enumerate(plan):
     with col4:
         st.text(topic["status"])
     with col5:
-        planned = st.number_input(f"Planned Days {topic['topic']}", min_value=1, value=topic["planned_days"], key=f"planned_{i}")
+        # Planned Days input
+        planned_key = f"planned_{subject_select}_{i}"
+        planned = st.number_input(f"", min_value=1, value=topic["planned_days"], key=planned_key)
         topic["planned_days"] = planned
     with col6:
-        actual = st.number_input(f"Actual Days {topic['topic']}", min_value=1, value=topic["actual_days"] if topic["actual_days"] else topic["planned_days"], key=f"actual_{i}")
-        topic["actual_days"] = actual if topic["status"] == "Completed" else None
+        # Actual Days input
+        actual_key = f"actual_{subject_select}_{i}"
+        actual_val = topic["actual_days"] if topic["actual_days"] else topic["planned_days"]
+        actual = st.number_input(f"", min_value=1, value=actual_val, key=actual_key)
+        if topic["status"] == "Completed":
+            topic["actual_days"] = actual
     with col7:
-        btn_key = f"{topic['topic']}_complete"
+        # Mark Completed button
+        btn_key = f"{subject_select}_{topic['topic']}_complete"
         if st.button("Mark Completed", key=btn_key):
             mark_topic(plan, topic["topic"], actual)
             st.success(f"Marked '{topic['topic']}' completed.")
