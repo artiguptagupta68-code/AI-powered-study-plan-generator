@@ -1,172 +1,159 @@
-import streamlit as st
-import zipfile, os
-import fitz
 from datetime import datetime, timedelta
 
-# ---------------- CONFIG ----------------
-EXTRACT_PATH = "syllabus_data"
-os.makedirs(EXTRACT_PATH, exist_ok=True)
+# ----------------- SAMPLE SYLLABUS -----------------
+# Structure: Exam -> Subject -> Topic -> Details
+syllabus = {
+    "UPSC": {
+        "Polity": {
+            "Indian Constitution": {"estimated_time": 3, "practice_time": 1, "revision_time":1},
+            "Parliament & Govt": {"estimated_time": 2, "practice_time": 1, "revision_time":1},
+        },
+        "Economy": {
+            "Budget & Fiscal Policy": {"estimated_time": 2, "practice_time": 1, "revision_time":1},
+            "Economic Survey": {"estimated_time": 3, "practice_time": 1, "revision_time":1},
+        },
+    },
+    "GATE": {
+        "Engineering Mathematics": {
+            "Linear Algebra": {"estimated_time": 3, "practice_time": 1, "revision_time":1},
+            "Calculus": {"estimated_time": 4, "practice_time": 1, "revision_time":1},
+        },
+        "Digital Logic": {
+            "Boolean Algebra": {"estimated_time": 2, "practice_time": 1, "revision_time":1},
+        }
+    },
+    "SSC": {
+        "Quantitative Aptitude": {
+            "Algebra": {"estimated_time": 2, "practice_time": 1, "revision_time":1},
+            "Geometry": {"estimated_time": 3, "practice_time": 1, "revision_time":1},
+        },
+        "Reasoning": {
+            "Puzzles": {"estimated_time": 2, "practice_time": 1, "revision_time":1},
+        }
+    }
+}
 
-# ---------------- PDF READING ----------------
-def read_pdf_text(path):
-    doc = fitz.open(path)
-    lines = []
-    for page in doc:
-        for line in page.get_text("text").split("\n"):
-            if line.strip():
-                lines.append(line.strip())
-    return lines
+# ----------------- STATUS TRACKER -----------------
+# key: (exam, subject, topic)
+topic_status = {}
 
-# ---------------- BUILD SYLLABUS (TOPICS ONLY) ----------------
-def build_syllabus():
-    syllabus = {}
-    for root, dirs, files in os.walk(EXTRACT_PATH):
-        for file in files:
-            if file.endswith(".pdf"):
-                exam = os.path.basename(root)
-                if exam not in syllabus:
-                    syllabus[exam] = {}
-                subject = os.path.splitext(file)[0]
-                lines = read_pdf_text(os.path.join(root, file))
-                
-                # Only capture topics (line with colon or short lines)
-                topics = []
-                for line in lines:
-                    if ':' in line or len(line.split()) <= 6:
-                        topics.append(line)
-                syllabus[exam][subject] = topics
-    return syllabus
+for exam, subjects in syllabus.items():
+    for subject, topics in subjects.items():
+        for topic in topics:
+            topic_status[(exam, subject, topic)] = {
+                "status": "pending",
+                "last_studied": None,
+                "next_revision": []
+            }
 
-# ---------------- STATUS TRACKER ----------------
-topic_data = {}  # key: (exam, subject, topic)
+# ----------------- FUNCTIONS -----------------
 
-def init_status(syllabus):
-    for exam, subjects in syllabus.items():
-        for subject, topics in subjects.items():
-            for topic in topics:
-                topic_data[(exam, subject, topic)] = {
-                    "status": "pending",
-                    "actual_time": 2,       # placeholder, adaptive later
-                    "practice_time": 1,
-                    "revision_time": 1,
-                    "last_studied": None,
-                    "next_revision": None
-                }
-
-# ---------------- DAILY PLANNER LOGIC ----------------
 def get_pending_topics(selected_subjects):
-    return [k for k,v in topic_data.items() if k[1] in selected_subjects and v["status"]=="pending"]
+    pending = []
+    for (exam, subject, topic), info in topic_status.items():
+        if subject in selected_subjects and info["status"] == "pending":
+            pending.append((exam, subject, topic))
+    return pending
 
 def assign_daily_topics(capacity, selected_subjects):
     assigned = []
     used = 0
-    for k in get_pending_topics(selected_subjects):
-        time_needed = topic_data[k]["actual_time"] + topic_data[k]["practice_time"]
-        if used + time_needed <= capacity:
+    pending = get_pending_topics(selected_subjects)
+    for k in pending:
+        exam, subject, topic = k
+        est_time = syllabus[exam][subject][topic]["estimated_time"] + syllabus[exam][subject][topic]["practice_time"]
+        if used + est_time <= capacity:
             assigned.append(k)
-            used += time_needed
+            used += est_time
         else:
             break
     return assigned
 
 def mark_completed(k):
-    topic_data[k]["status"] = "completed"
-    topic_data[k]["last_studied"] = datetime.now()
-    topic_data[k]["next_revision"] = [
+    exam, subject, topic = k
+    topic_status[k]["status"] = "completed"
+    topic_status[k]["last_studied"] = datetime.now()
+    topic_status[k]["next_revision"] = [
         datetime.now() + timedelta(days=1),
         datetime.now() + timedelta(days=3),
         datetime.now() + timedelta(days=7)
     ]
+    print(f"✅ Completed: {exam} > {subject} > {topic}")
 
 def add_delay(k):
-    topic_data[k]["status"] = "delayed"
+    topic_status[k]["status"] = "delayed"
+    print(f"⏱ Delayed: {k}")
 
 def get_due_revisions():
     now = datetime.now()
     due = []
-    for k, v in topic_data.items():
-        if v["status"]=="completed" and v["next_revision"]:
-            for rev in v["next_revision"]:
+    for k, info in topic_status.items():
+        if info["status"] == "completed":
+            for rev in info["next_revision"]:
                 if now >= rev:
                     due.append(k)
                     break
     return due
 
-def progress_stats():
-    total = len(topic_data)
-    completed = len([v for v in topic_data.values() if v["status"]=="completed"])
-    return total, completed
+def show_progress():
+    total = len(topic_status)
+    completed = len([v for v in topic_status.values() if v["status"] == "completed"])
+    pending = len([v for v in topic_status.values() if v["status"] == "pending"])
+    delayed = len([v for v in topic_status.values() if v["status"] == "delayed"])
+    print(f"\n📊 Progress: Total={total}, Completed={completed}, Pending={pending}, Delayed={delayed}\n")
 
-# ---------------- STREAMLIT UI ----------------
-st.set_page_config("Adaptive Study Planner", layout="wide")
-st.title("📘 Adaptive Study Planner (Topics Only)")
+# ----------------- MAIN LOOP -----------------
+def daily_planner():
+    while True:
+        print("\n=== Adaptive Study Planner ===")
+        show_progress()
 
-menu = st.sidebar.selectbox("Navigation", ["Upload Syllabus ZIP", "Daily Planner", "Progress Dashboard"])
+        # Input daily capacity and subjects
+        try:
+            capacity = float(input("Enter your study capacity today (hours, e.g., 6): "))
+        except:
+            print("Invalid input!")
+            continue
 
-# ---------------- UPLOAD ZIP ----------------
-if menu == "Upload Syllabus ZIP":
-    st.header("📂 Upload your syllabus ZIP")
-    uploaded_file = st.file_uploader("Upload ZIP file containing PDFs", type=["zip"])
-    if uploaded_file is not None:
-        zip_path = os.path.join(EXTRACT_PATH, "plan.zip")
-        with open(zip_path, "wb") as f:
-            f.write(uploaded_file.getbuffer())
-        with zipfile.ZipFile(zip_path, 'r') as z:
-            z.extractall(EXTRACT_PATH)
-        st.success("ZIP extracted successfully! Go to Daily Planner to generate study plan.")
+        print("\nAvailable subjects:")
+        subjects_list = list({sub for _, sub, _ in topic_status})
+        for i, s in enumerate(subjects_list):
+            print(f"{i+1}. {s}")
+        choices = input("Select subjects to study today (comma-separated numbers): ")
+        try:
+            selected_subjects = [subjects_list[int(c)-1] for c in choices.split(",")]
+        except:
+            print("Invalid selection!")
+            continue
 
-# ---------------- DAILY PLANNER ----------------
-elif menu == "Daily Planner":
-    syllabus = build_syllabus()
-    if not topic_data:
-        init_status(syllabus)
-    
-    st.header("📅 Today's Study Plan")
-    
-    # Parallel subjects selection
-    all_subjects = []
-    for exam, subjects in syllabus.items():
-        all_subjects.extend(subjects.keys())
-    selected_subjects = st.multiselect("Select subjects to study today", all_subjects, default=all_subjects)
-    
-    capacity = st.number_input("Your study capacity today (hours)", min_value=1, max_value=16, value=6)
-    
-    # Assign topics + revisions
-    assigned = assign_daily_topics(capacity, selected_subjects)
-    due_revisions = get_due_revisions()
-    
-    st.subheader("📌 Topics Assigned Today")
-    for k in assigned:
-        exam, subject, topic = k
-        col1, col2, col3 = st.columns([4,1,1])
-        col1.write(f"{exam} > {subject} > {topic}")
-        if col2.button("✅ Done", key=f"done{k}"):
-            mark_completed(k)
-            st.experimental_rerun()
-        if col3.button("⏱ Delay", key=f"delay{k}"):
-            add_delay(k)
-            st.warning("Delay added")
-    
-    if due_revisions:
-        st.subheader("🕑 Due Revisions")
-        for k in due_revisions:
-            exam, subject, topic = k
-            st.info(f"{exam} > {subject} > {topic} (Revision Due)")
+        # Assign topics
+        assigned = assign_daily_topics(capacity, selected_subjects)
+        if not assigned:
+            print("No topics can fit in your capacity today or all topics are done!")
+        else:
+            print("\n📌 Topics assigned today:")
+            for i, k in enumerate(assigned, 1):
+                print(f"{i}. {k[0]} > {k[1]} > {k[2]}")
 
-# ---------------- PROGRESS DASHBOARD ----------------
-else:
-    st.header("📊 Progress Dashboard")
-    total, completed = progress_stats()
-    st.metric("Total Topics", total)
-    st.metric("Completed", completed)
-    st.progress(completed / total if total else 0)
-    
-    st.subheader("Pending Topics")
-    for k, v in topic_data.items():
-        if v["status"]=="pending":
-            st.write(" > ".join(k))
-    
-    st.subheader("Delayed Topics")
-    for k, v in topic_data.items():
-        if v["status"]=="delayed":
-            st.warning(" > ".join(k))
+            # Mark completed / delayed
+            for i, k in enumerate(assigned, 1):
+                action = input(f"Did you complete topic {i}? (y = yes / n = delay): ").strip().lower()
+                if action == "y":
+                    mark_completed(k)
+                else:
+                    add_delay(k)
+
+        # Show due revisions
+        due = get_due_revisions()
+        if due:
+            print("\n🕑 Topics due for revision today:")
+            for k in due:
+                print(f"- {k[0]} > {k[1]} > {k[2]}")
+
+        cont = input("\nDo you want to plan next day? (y/n): ").strip().lower()
+        if cont != "y":
+            break
+
+# ----------------- RUN -----------------
+if __name__ == "__main__":
+    daily_planner()
