@@ -1,125 +1,129 @@
-import requests, zipfile, os, fitz
-from collections import defaultdict
+from datetime import datetime, timedelta
 
-# -----------------------
-# 1) Download from Drive
-# -----------------------
+# ----------------------
+# 1) Already have topic_status from syllabus PDF parsing
+# ----------------------
 
-file_id = "1IRP5upBPCua57WmoEfjn9t6YJQq0_yGB"
-download_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+# topic_status = { (exam, subject, topic): {...} }
 
-local_zip = "plan.zip"
-extract_dir = "syllabus_data"
-os.makedirs(extract_dir, exist_ok=True)
+# ----------------------
+# 2) Planner functions
+# ----------------------
+def get_pending_topics(selected_subjects):
+    return [k for k,v in topic_status.items() if v['status']=='pending' and k[1] in selected_subjects]
 
-print("📥 Downloading syllabus ZIP from Drive...")
+def assign_daily_topics(capacity, selected_subjects):
+    assigned = []
+    used = 0
+    pending = get_pending_topics(selected_subjects)
+    for k in pending:
+        est_time = topic_status[k]['estimated_time'] + topic_status[k]['practice_time']
+        if used + est_time <= capacity:
+            assigned.append(k)
+            used += est_time
+        else:
+            break
+    return assigned
 
-response = requests.get(download_url)
-with open(local_zip, "wb") as f:
-    f.write(response.content)
+def mark_completed(k):
+    topic_status[k]['status'] = 'completed'
+    topic_status[k]['last_studied'] = datetime.now()
+    topic_status[k]['next_revision'] = [
+        datetime.now() + timedelta(days=1),
+        datetime.now() + timedelta(days=3),
+        datetime.now() + timedelta(days=7)
+    ]
+    print(f"✅ Completed: {k[0]} > {k[1]} > {k[2]}")
 
-print("✅ Download complete!")
+def add_delay(k):
+    topic_status[k]['status'] = 'delayed'
+    print(f"⏱ Delayed: {k}")
 
-# -----------------------
-# 2) Extract ZIP
-# -----------------------
+def get_due_revisions():
+    now = datetime.now()
+    due = []
+    for k, info in topic_status.items():
+        if info['status']=='completed':
+            for rev in info['next_revision']:
+                if now >= rev:
+                    due.append(k)
+                    break
+    return due
 
-with zipfile.ZipFile(local_zip, 'r') as zip_ref:
-    zip_ref.extractall(extract_dir)
+def adjust_time_adaptively(k, actual_hours):
+    old = topic_status[k]['estimated_time']
+    topic_status[k]['estimated_time'] = round((old + actual_hours)/2,2)
+    print(f"🛠 Adaptive update: {k} new est. time = {topic_status[k]['estimated_time']} hr")
 
-print("📂 ZIP extracted to:", extract_dir)
+def show_progress():
+    total = len(topic_status)
+    completed = len([v for v in topic_status.values() if v['status']=='completed'])
+    pending = len([v for v in topic_status.values() if v['status']=='pending'])
+    delayed = len([v for v in topic_status.values() if v['status']=='delayed'])
+    print(f"\n📊 Progress → Total:{total} | Completed:{completed} | Pending:{pending} | Delayed:{delayed}")
 
-# -----------------------
-# 3) Read PDF text
-# -----------------------
+# ----------------------
+# 3) Daily planner loop
+# ----------------------
+def daily_planner():
+    while True:
+        print("\n=== Adaptive Study Planner ===")
+        show_progress()
 
-def read_pdf_text(path):
-    doc = fitz.open(path)
-    lines = []
-    for page in doc:
-        text = page.get_text("text")
-        for line in text.split("\n"):
-            if line.strip():
-                lines.append(line.strip())
-    return lines
+        # Daily capacity
+        try:
+            capacity = float(input("Enter study capacity today (hrs): "))
+        except:
+            print("❌ Invalid input!")
+            continue
 
-# -----------------------
-# 4) Build syllabus tree
-# -----------------------
+        # Select subjects
+        subjects_list = list({sub for _,sub,_ in topic_status})
+        print("\nAvailable subjects:")
+        for i,s in enumerate(subjects_list):
+            print(f"{i+1}. {s}")
+        choices = input("Select subjects to study (comma-separated numbers): ")
+        try:
+            selected_subjects = [subjects_list[int(c)-1] for c in choices.split(",")]
+        except:
+            print("❌ Invalid selection!")
+            continue
 
-def build_syllabus(root_path):
-    syllabus = defaultdict(dict)
+        # Assign topics
+        assigned = assign_daily_topics(capacity, selected_subjects)
+        if not assigned:
+            print("No topics fit in your capacity today or all topics done!")
+        else:
+            print("\n📌 Topics assigned today:")
+            for i,k in enumerate(assigned,1):
+                print(f"{i}. {k[0]} > {k[1]} > {k[2]}")
 
-    for root, dirs, files in os.walk(root_path):
-        exam = os.path.basename(root)
+            # Complete/delay input
+            for i,k in enumerate(assigned,1):
+                action = input(f"Did you complete topic {i}? (y = yes / n = delay): ").strip().lower()
+                if action=='y':
+                    mark_completed(k)
+                    try:
+                        actual_hours = float(input("Enter actual hours spent: "))
+                        adjust_time_adaptively(k, actual_hours)
+                    except:
+                        pass
+                else:
+                    add_delay(k)
 
-        for file in files:
-            if file.lower().endswith(".pdf"):
-                subject = os.path.splitext(file)[0]
-                pdf_path = os.path.join(root, file)
+        # Revisions
+        due = get_due_revisions()
+        if due:
+            print("\n🕑 Topics due for revision today:")
+            for k in due:
+                print(f"- {k[0]} > {k[1]} > {k[2]}")
 
-                pdf_lines = read_pdf_text(pdf_path)
+        cont = input("\nPlan next day? (y/n): ").strip().lower()
+        if cont != 'y':
+            break
 
-                # simple heuristic: lines with ':' or short lines as topic
-                topics = defaultdict(list)
-                current_topic = None
-
-                for line in pdf_lines:
-                    # treat lines with colon OR <=6 words as topic
-                    if ':' in line or len(line.split()) <= 6:
-                        if current_topic:
-                            topics[current_topic] = topics[current_topic]
-                        current_topic = line
-                    else:
-                        if current_topic:
-                            topics[current_topic].append(line)
-
-                if current_topic:
-                    topics[current_topic] = topics[current_topic]
-
-                syllabus[exam][subject] = topics
-
-    return syllabus
-
-syllabus = build_syllabus(extract_dir)
-print("📚 Syllabus tree built.")
-
-# -----------------------
-# 5) Estimate time per topic
-# -----------------------
-
-def calc_estimated_time(syllabus):
-    keyword_multiplier = {"advanced":1.5, "complex":1.3, "important":1.2}
-    topic_status = {}
-
-    for exam, subjects in syllabus.items():
-        for subject, topics in subjects.items():
-            for topic, subtopics in topics.items():
-                num_lines = 1 + sum(len(s.split()) for s in subtopics)
-                base_time = num_lines * 0.1  # ~0.1 hr per line
-
-                mult = 1.0
-                for kw, m in keyword_multiplier.items():
-                    if kw in topic.lower():
-                        mult *= m
-
-                est = round(base_time * mult, 2)
-                practice = round(est * 0.3, 2)
-
-                topic_status[(exam, subject, topic)] = {
-                    "estimated_time": est,
-                    "practice_time": practice,
-                    "revision_time": 1,
-                    "status": "pending",
-                    "last_studied": None,
-                    "next_revision": []
-                }
-
-    return topic_status
-
-topic_status = calc_estimated_time(syllabus)
-print("🕒 Estimated times calculated for topics.")
-
-# Example output
-for k,v in list(topic_status.items())[:5]:
-    print(k, "→", v)
+# ----------------------
+# 4) Run
+# ----------------------
+if __name__=="__main__":
+    daily_planner()
