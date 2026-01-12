@@ -1,159 +1,89 @@
-from datetime import datetime, timedelta
+import zipfile, os
+import fitz  # PyMuPDF
+from collections import defaultdict
 
-# ----------------- SAMPLE SYLLABUS -----------------
-# Structure: Exam -> Subject -> Topic -> Details
-syllabus = {
-    "UPSC": {
-        "Polity": {
-            "Indian Constitution": {"estimated_time": 3, "practice_time": 1, "revision_time":1},
-            "Parliament & Govt": {"estimated_time": 2, "practice_time": 1, "revision_time":1},
-        },
-        "Economy": {
-            "Budget & Fiscal Policy": {"estimated_time": 2, "practice_time": 1, "revision_time":1},
-            "Economic Survey": {"estimated_time": 3, "practice_time": 1, "revision_time":1},
-        },
-    },
-    "GATE": {
-        "Engineering Mathematics": {
-            "Linear Algebra": {"estimated_time": 3, "practice_time": 1, "revision_time":1},
-            "Calculus": {"estimated_time": 4, "practice_time": 1, "revision_time":1},
-        },
-        "Digital Logic": {
-            "Boolean Algebra": {"estimated_time": 2, "practice_time": 1, "revision_time":1},
-        }
-    },
-    "SSC": {
-        "Quantitative Aptitude": {
-            "Algebra": {"estimated_time": 2, "practice_time": 1, "revision_time":1},
-            "Geometry": {"estimated_time": 3, "practice_time": 1, "revision_time":1},
-        },
-        "Reasoning": {
-            "Puzzles": {"estimated_time": 2, "practice_time": 1, "revision_time":1},
-        }
-    }
-}
+ZIP_PATH = r"C:\Users\ASUS\Downloads\plan.zip"
+EXTRACT_PATH = "syllabus_data"
+os.makedirs(EXTRACT_PATH, exist_ok=True)
 
-# ----------------- STATUS TRACKER -----------------
-# key: (exam, subject, topic)
-topic_status = {}
+# Extract ZIP
+with zipfile.ZipFile(ZIP_PATH, 'r') as zip_ref:
+    zip_ref.extractall(EXTRACT_PATH)
+print("✅ ZIP extracted successfully!")
+def read_pdf_text(path):
+    doc = fitz.open(path)
+    lines = []
+    for page in doc:
+        for line in page.get_text("text").split("\n"):
+            if line.strip():
+                lines.append(line.strip())
+    return lines
 
-for exam, subjects in syllabus.items():
-    for subject, topics in subjects.items():
-        for topic in topics:
-            topic_status[(exam, subject, topic)] = {
-                "status": "pending",
-                "last_studied": None,
-                "next_revision": []
-            }
+def build_syllabus_from_folder(root_path):
+    syllabus = defaultdict(dict)
+    for root, dirs, files in os.walk(root_path):
+        exam_name = os.path.basename(root)
+        for file in files:
+            if file.endswith(".pdf"):
+                subject_name = os.path.splitext(file)[0]
+                pdf_path = os.path.join(root, file)
+                lines = read_pdf_text(pdf_path)
 
-# ----------------- FUNCTIONS -----------------
+                # Simple parsing: lines with colon are topics
+                topics = defaultdict(list)
+                current_topic = None
+                for line in lines:
+                    if ':' in line or len(line.split()) <= 6:
+                        if current_topic:
+                            topics[current_topic] = topics[current_topic]
+                        current_topic = line
+                    else:
+                        if current_topic:
+                            topics[current_topic].append(line)
+                if current_topic:
+                    topics[current_topic] = topics[current_topic]
+                syllabus[exam_name][subject_name] = topics
+    return syllabus
 
-def get_pending_topics(selected_subjects):
-    pending = []
-    for (exam, subject, topic), info in topic_status.items():
-        if subject in selected_subjects and info["status"] == "pending":
-            pending.append((exam, subject, topic))
-    return pending
+syllabus = build_syllabus_from_folder(EXTRACT_PATH)
+print("✅ Syllabus tree built successfully!")
+def calculate_estimated_time(syllabus):
+    keyword_multiplier = {"advanced":1.5, "complex":1.3, "important":1.2}
+    topic_times = {}
 
-def assign_daily_topics(capacity, selected_subjects):
-    assigned = []
-    used = 0
-    pending = get_pending_topics(selected_subjects)
-    for k in pending:
-        exam, subject, topic = k
-        est_time = syllabus[exam][subject][topic]["estimated_time"] + syllabus[exam][subject][topic]["practice_time"]
-        if used + est_time <= capacity:
-            assigned.append(k)
-            used += est_time
-        else:
-            break
-    return assigned
+    for exam, subjects in syllabus.items():
+        for subject, topics in subjects.items():
+            for topic, subtopics in topics.items():
+                # Base time = 0.1 hr per line in topic + subtopics
+                num_lines = 1  # counting topic line itself
+                num_lines += sum(len(st.split()) for st in subtopics)
+                base_time = num_lines * 0.1  # hours
 
-def mark_completed(k):
-    exam, subject, topic = k
-    topic_status[k]["status"] = "completed"
-    topic_status[k]["last_studied"] = datetime.now()
-    topic_status[k]["next_revision"] = [
-        datetime.now() + timedelta(days=1),
-        datetime.now() + timedelta(days=3),
-        datetime.now() + timedelta(days=7)
-    ]
-    print(f"✅ Completed: {exam} > {subject} > {topic}")
+                # Adjust with keywords
+                multiplier = 1.0
+                for kw, m in keyword_multiplier.items():
+                    if kw.lower() in topic.lower():
+                        multiplier *= m
+                est_time = round(base_time * multiplier, 2)
+                
+                # Practice time = 30% of estimated time
+                practice_time = round(est_time * 0.3, 2)
 
-def add_delay(k):
-    topic_status[k]["status"] = "delayed"
-    print(f"⏱ Delayed: {k}")
+                topic_times[(exam, subject, topic)] = {
+                    "estimated_time": est_time,
+                    "practice_time": practice_time,
+                    "revision_time": 1,
+                    "subtopics": subtopics,
+                    "status": "pending",
+                    "last_studied": None,
+                    "next_revision": []
+                }
+    return topic_times
 
-def get_due_revisions():
-    now = datetime.now()
-    due = []
-    for k, info in topic_status.items():
-        if info["status"] == "completed":
-            for rev in info["next_revision"]:
-                if now >= rev:
-                    due.append(k)
-                    break
-    return due
-
-def show_progress():
-    total = len(topic_status)
-    completed = len([v for v in topic_status.values() if v["status"] == "completed"])
-    pending = len([v for v in topic_status.values() if v["status"] == "pending"])
-    delayed = len([v for v in topic_status.values() if v["status"] == "delayed"])
-    print(f"\n📊 Progress: Total={total}, Completed={completed}, Pending={pending}, Delayed={delayed}\n")
-
-# ----------------- MAIN LOOP -----------------
-def daily_planner():
-    while True:
-        print("\n=== Adaptive Study Planner ===")
-        show_progress()
-
-        # Input daily capacity and subjects
-        try:
-            capacity = float(input("Enter your study capacity today (hours, e.g., 6): "))
-        except:
-            print("Invalid input!")
-            continue
-
-        print("\nAvailable subjects:")
-        subjects_list = list({sub for _, sub, _ in topic_status})
-        for i, s in enumerate(subjects_list):
-            print(f"{i+1}. {s}")
-        choices = input("Select subjects to study today (comma-separated numbers): ")
-        try:
-            selected_subjects = [subjects_list[int(c)-1] for c in choices.split(",")]
-        except:
-            print("Invalid selection!")
-            continue
-
-        # Assign topics
-        assigned = assign_daily_topics(capacity, selected_subjects)
-        if not assigned:
-            print("No topics can fit in your capacity today or all topics are done!")
-        else:
-            print("\n📌 Topics assigned today:")
-            for i, k in enumerate(assigned, 1):
-                print(f"{i}. {k[0]} > {k[1]} > {k[2]}")
-
-            # Mark completed / delayed
-            for i, k in enumerate(assigned, 1):
-                action = input(f"Did you complete topic {i}? (y = yes / n = delay): ").strip().lower()
-                if action == "y":
-                    mark_completed(k)
-                else:
-                    add_delay(k)
-
-        # Show due revisions
-        due = get_due_revisions()
-        if due:
-            print("\n🕑 Topics due for revision today:")
-            for k in due:
-                print(f"- {k[0]} > {k[1]} > {k[2]}")
-
-        cont = input("\nDo you want to plan next day? (y/n): ").strip().lower()
-        if cont != "y":
-            break
-
-# ----------------- RUN -----------------
-if __name__ == "__main__":
-    daily_planner()
+topic_status = calculate_estimated_time(syllabus)
+print("✅ Estimated time calculated for all topics!")
+def adjust_time_adaptively(topic_key, actual_hours_spent):
+    old_est = topic_status[topic_key]["estimated_time"]
+    # Update estimated time as weighted average
+    topic_status[topic_key]["estimated_time"] = round((old_est + actual_hours_spent) / 2, 2)
+    print(f"Adaptive update: {topic_key} new estimated time = {topic_status[topic_key]['estimated_time']} hr")
