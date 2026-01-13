@@ -67,24 +67,23 @@ def detect_exam_stage(pdf_path, lines):
             stage = "JEE Advanced"
         return "IIT JEE", stage
 
-    # ---------------- GATE ----------------
-    # ---------------- GATE ----------------
-    if "GATE" in folder or "GATE" in filename or "GRADUATE APTITUDE TEST" in text:
+    # GATE
+    if "GATE" in text_sample:
         branch = None
-    # Scan the entire PDF lines for branch heading
-        for l in lines:
+        exam = "GATE"
+        for l in lines[:20]:
             l_clean = l.strip()
-        # Branch is usually uppercase, short (<=5 words), not the word 'GATE'
-            if l_clean.isupper() and len(l_clean.split()) <= 5 and "GATE" not in l_clean and not l_clean.isdigit():
+            if l_clean.isupper() and len(l_clean.split()) <= 3 and "GATE" not in l_clean:
                 branch = l_clean
                 break
-    if not branch:
-        branch = "General"  # fallback if branch not found
-        return "GATE", branch
+        if not branch:
+            branch = os.path.splitext(os.path.basename(pdf_path))[0].replace("gate", "").strip().upper()
+        return f"{exam} ({branch})", None
+
+    return "UNKNOWN", None
 
        
 
-    return "UNKNOWN", "General"
 
 # -----------------------------
 # 6️⃣ Parse PDFs → JSON
