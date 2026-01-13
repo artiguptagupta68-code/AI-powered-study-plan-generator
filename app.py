@@ -164,4 +164,3 @@ if selected_exam:
                 st.write(f"  - Subtopics: {subtopics}")
         else:
             st.info("No topics fit within your study capacity today!")
-
