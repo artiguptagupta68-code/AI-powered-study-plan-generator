@@ -1,4 +1,7 @@
-# app.py
+# -----------------------------
+# app.py (NEET, IIT JEE, GATE)
+# -----------------------------
+
 import streamlit as st
 import os
 import zipfile
@@ -50,7 +53,7 @@ def read_pdf_lines(pdf_path):
 # 5️⃣ Detect exam and stage/tier
 # -----------------------------
 def detect_exam_stage(pdf_path, lines):
-    text = " ".join(lines).upper()  # scan entire PDF
+    text = " ".join(lines).upper()
     filename = os.path.basename(pdf_path).upper()
     folder = os.path.basename(os.path.dirname(pdf_path)).upper()
 
@@ -69,15 +72,18 @@ def detect_exam_stage(pdf_path, lines):
 
     # -------- GATE --------
     if "GATE" in folder or "GATE" in filename or "GRADUATE APTITUDE TEST" in text:
+        # detect branch from PDF content
         branch = None
-        # scan all lines for branch name
         for l in lines:
             l_clean = l.strip()
             if l_clean.isupper() and len(l_clean.split()) <= 5 and "GATE" not in l_clean and not l_clean.isdigit():
                 branch = l_clean
                 break
+        # if branch not found, try from filename
         if not branch:
-            branch = "General"
+            branch = os.path.splitext(filename)[0].replace("GATE", "").replace("_"," ").strip().title()
+            if not branch:
+                branch = "General"
         return "GATE", branch
 
     return "UNKNOWN", "General"
@@ -97,7 +103,6 @@ def pdfs_to_json(pdf_folder):
             lines = read_pdf_lines(pdf_path)
             exam, stage = detect_exam_stage(pdf_path, lines)
 
-            # skip unknown exams
             if exam == "UNKNOWN":
                 continue
 
@@ -127,25 +132,23 @@ def pdfs_to_json(pdf_folder):
 
     return syllabus
 
-# # -----------------------------
+# -----------------------------
 # 7️⃣ Run parsing
 # -----------------------------
 syllabus_json = pdfs_to_json(EXTRACT_DIR)
+all_syllabus = syllabus_json  # Save in variable
 
 if not syllabus_json:
     st.warning("⚠️ No syllabus detected!")
 else:
     st.success("✅ Syllabus parsed successfully!")
 
-    # -----------------------------
-    # 🔹 DEBUG: Print GATE syllabus
-    # -----------------------------
+    # Debug GATE
     if "GATE" in syllabus_json:
         st.subheader("🔍 GATE Syllabus JSON Debug")
         st.text(json.dumps(syllabus_json["GATE"], indent=2))
     else:
         st.info("ℹ️ No GATE syllabus detected in the ZIP.")
-
 
 # -----------------------------
 # 8️⃣ Display syllabus
