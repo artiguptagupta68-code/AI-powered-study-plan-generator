@@ -4,16 +4,15 @@ import os, zipfile
 import gdown
 import fitz
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime
 import json
 
 # -----------------------------
 # 1️⃣ Configuration
 # -----------------------------
-DRIVE_FILE_ID = "1IRP5upBPCua57WmoEfjn9t6YJQq0_yGB"  # Google Drive file ID for syllabus ZIP
+DRIVE_FILE_ID = "1IRP5upBPCua57WmoEfjn9t6YJQq0_yGB"  # Google Drive file ID
 LOCAL_ZIP = "plan.zip"
 EXTRACT_DIR = "plan_data"
-JSON_OUTPUT = "syllabus.json"
 
 st.title("📚 Adaptive Study Planner for UPSC / GATE / SSC")
 
@@ -59,7 +58,9 @@ def detect_exam(lines):
     return "UNKNOWN"
 
 def parse_pdfs(folder):
-    syllabus = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+    """Parse all PDFs in folder and return syllabus as variable"""
+    syllabus_var = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+
     for file in os.listdir(folder):
         if not file.lower().endswith(".pdf"):
             continue
@@ -83,23 +84,20 @@ def parse_pdfs(folder):
             if (":" in clean or clean[:2].isdigit() or clean.startswith("-")) and len(clean.split()) <= 12:
                 current_topic = clean.replace(":", "").strip()
                 if current_subject:
-                    syllabus[exam][current_subject][current_topic] = []
+                    syllabus_var[exam][current_subject][current_topic] = []
                 continue
 
             # SUBTOPIC heuristic
             if current_subject and current_topic:
                 parts = [p.strip() for p in clean.split(",") if len(p.strip())>3]
-                syllabus[exam][current_subject][current_topic].extend(parts)
-    return syllabus
+                syllabus_var[exam][current_subject][current_topic].extend(parts)
+
+    return syllabus_var
 
 # -----------------------------
-# 5️⃣ Parse and save JSON
+# 5️⃣ Parse PDFs and store in variable
 # -----------------------------
-syllabus = parse_pdfs(EXTRACT_DIR)
-
-with open(JSON_OUTPUT, "w", encoding="utf-8") as f:
-    json.dump(syllabus, f, indent=2, ensure_ascii=False)
-st.success("✅ Syllabus parsed and saved!")
+syllabus = parse_pdfs(EXTRACT_DIR)  # ✅ All syllabus is now in this variable
 
 # -----------------------------
 # 6️⃣ Show full syllabus
@@ -143,5 +141,3 @@ if selected_exam:
                 for stp in subtopics:
                     st.markdown(f"    - {stp}")
         st.success(f"✅ Plan generated for {selected_exam} starting {start_date} with {capacity}h/day study.")
-
-
