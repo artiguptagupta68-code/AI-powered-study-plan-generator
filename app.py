@@ -49,14 +49,18 @@ def read_pdf_lines(pdf_path):
 # -----------------------------
 # 5️⃣ Detect exam and stage/tier
 # -----------------------------
+# -----------------------------
+# 5️⃣ Detect exam and stage/tier (updated)
+# -----------------------------
 def detect_exam_stage(pdf_path, lines):
     text_sample = " ".join(lines[:50]).upper()
 
-    # UPSC
+    # ---------------- UPSC ----------------
     if any("UNION PUBLIC SERVICE COMMISSION" in l.upper() for l in lines[:5]):
         stage = None
+        # Detect Stage-1 / Stage-2 from syllabus headings
         for l in lines:
-            if "PRELIMINARY" in l.upper():
+            if "PRELIMINARY" in l.upper() or "STAGE-1" in l.upper():
                 stage = "Stage-1"
                 break
             elif "MAIN" in l.upper() or "STAGE-2" in l.upper():
@@ -66,21 +70,22 @@ def detect_exam_stage(pdf_path, lines):
             stage = "Stage-1"
         return "UPSC", stage
 
-    # SSC CGL
+    # ---------------- SSC CGL ----------------
     if "COMBINED GRADUATE LEVEL EXAMINATION" in text_sample:
         tier = None
         for l in lines:
-            if "INDICATIVE SYLLABUS (TIER-I)" in l.upper():
+            l_upper = l.upper()
+            if "INDICATIVE SYLLABUS (TIER-I)" in l_upper or "TIER-I" in l_upper:
                 tier = "Tier-1"
                 break
-            elif "INDICATIVE SYLLABUS (TIER-II)" in l.upper():
+            elif "INDICATIVE SYLLABUS (TIER-II)" in l_upper or "TIER-II" in l_upper:
                 tier = "Tier-2"
                 break
         if not tier:
-            tier = "General"
+            tier = "Tier-1"  # default to Tier-1 if not found
         return "SSC (CGL)", tier
 
-    # GATE
+    # ---------------- GATE ----------------
     if "GATE" in text_sample:
         branch = None
         exam = "GATE"
@@ -95,47 +100,6 @@ def detect_exam_stage(pdf_path, lines):
 
     return "UNKNOWN", None
 
-# -----------------------------
-# 6️⃣ Parse PDFs → JSON
-# -----------------------------
-def pdfs_to_json(pdf_folder):
-    syllabus = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: defaultdict(list))))
-
-    for root, dirs, files in os.walk(pdf_folder):
-        for file in files:
-            if not file.lower().endswith(".pdf"):
-                continue
-            pdf_path = os.path.join(root, file)
-            lines = read_pdf_lines(pdf_path)
-            exam, stage = detect_exam_stage(pdf_path, lines)
-            if stage is None:
-                stage = "General"
-
-            current_subject = None
-            current_topic = None
-
-            for line in lines:
-                clean = line.strip()
-
-                # Subject
-                if clean.isupper() and clean.replace(" ", "").isalpha() and len(clean.split()) <= 5:
-                    current_subject = clean.title()
-                    current_topic = None
-                    continue
-
-                # Topic
-                if (":" in clean or clean[:2].isdigit() or clean.startswith("-")) and len(clean.split()) <= 12:
-                    current_topic = clean.replace(":", "").strip()
-                    if current_subject:
-                        syllabus[exam][stage][current_subject][current_topic] = []
-                    continue
-
-                # Subtopic
-                if current_subject and current_topic:
-                    parts = [p.strip() for p in clean.split(",") if len(p.strip()) > 3]
-                    syllabus[exam][stage][current_subject][current_topic].extend(parts)
-
-    return syllabus
 
 # -----------------------------
 # 7️⃣ Run parsing
