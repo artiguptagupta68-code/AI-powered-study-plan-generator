@@ -66,21 +66,22 @@ def detect_exam_stage(pdf_path, lines):
 
     # ---------------- GATE ----------------
     if "GATE" in folder or "GATE" in filename or "GRADUATE APTITUDE TEST" in text:
+        # Try to detect branch from PDF content
         branch = None
-        # Try to detect branch from first 30 lines
-        for l in lines[:30]:
+        for l in lines[:50]:  # check first 50 lines for branch
             l_clean = l.strip()
-            if l_clean.isupper() and len(l_clean.split()) <= 4 and "GATE" not in l_clean:
+            if l_clean.isupper() and len(l_clean.split()) <= 5 and "GATE" not in l_clean:
                 branch = l_clean
                 break
         # If no branch found, use filename as branch
         if not branch:
-            branch = os.path.splitext(filename)[0].replace("GATE", "").strip()
+            branch = os.path.splitext(filename)[0].replace("GATE", "").replace("_", " ").strip()
             if not branch:
                 branch = "General"
         return "GATE", branch
 
     return "UNKNOWN", "General"
+
 
 # -----------------------------
 # 6️⃣ Parse PDFs → JSON
