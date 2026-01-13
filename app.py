@@ -77,21 +77,16 @@ def detect_exam_stage(pdf_path, lines):
 
     # ---------------- GATE ----------------
     if "GATE" in text or "GRADUATE APTITUDE TEST" in text or "GATE" in filename:
-        branch = None
-
-        # Try to detect branch from headings
+        branch = "General"
         for l in lines[:25]:
             l_clean = l.strip()
             if l_clean.isupper() and len(l_clean.split()) <= 4 and "GATE" not in l_clean:
                 branch = l_clean
                 break
-
-        if not branch:
-            branch = os.path.splitext(os.path.basename(pdf_path))[0].upper()
-
-        return f"GATE ({branch})", "General"
+        return "GATE", branch
 
     return "UNKNOWN", "General"
+
 
 def pdfs_to_json(pdf_folder):
     syllabus = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: defaultdict(list))))
