@@ -45,7 +45,7 @@ def read_pdf_lines(pdf_path):
 # 4️⃣ Detect exam and GATE branch
 # -----------------------------
 def detect_exam_and_branch(lines):
-    text = " ".join(lines[:50]).upper()
+    text = " ".join(lines[:300]).upper()
     if "GATE" in text:
         exam = "GATE"
         branch = None
