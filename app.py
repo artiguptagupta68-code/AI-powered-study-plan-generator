@@ -12,7 +12,6 @@ import json
 # 1️⃣ Configuration
 # -----------------------------
 DRIVE_FILE_ID = "1S6fcsuq9KvICTsOBOdp6_WN9FhzruixM"  # syllabus ZIP
-"  # syllabus ZIP
 LOCAL_ZIP = "plan.zip"
 EXTRACT_DIR = "syllabus_data"
 
