@@ -49,99 +49,49 @@ def read_pdf_lines(pdf_path):
 
 
 
-# -----------------------------
-# 5️⃣ Detect exam and stage/tier (updated)
-# -----------------------------
 def detect_exam_stage(pdf_path, lines):
-    text_sample = " ".join(lines[:50]).upper()
+    text = " ".join(lines[:50]).upper()
+    filename = os.path.basename(pdf_path).upper()
 
-    # ---------------- UPSC ----------------
-    if any("UNION PUBLIC SERVICE COMMISSION" in l.upper() for l in lines[:5]):
-        stage = None
-        # Detect Stage-1 / Stage-2 from syllabus headings
-        for l in lines:
-            if "PRELIMINARY" in l.upper() or "STAGE-1" in l.upper():
-                stage = "Stage-1"
-                break
-            elif "MAIN" in l.upper() or "STAGE-2" in l.upper():
-                stage = "Stage-2"
-                break
-        if stage is None:
-            stage = "Stage-1"
-        return "UPSC", stage
+    # ---------------- NEET ----------------
+    if (
+        "NEET" in text
+        or "NEET" in filename
+        or "NATIONAL ELIGIBILITY CUM ENTRANCE TEST" in text
+    ):
+        return "NEET", "UG"
 
-    # ---------------- SSC CGL ----------------
-    if "COMBINED GRADUATE LEVEL EXAMINATION" in text_sample:
-        tier = None
-        for l in lines:
-            l_upper = l.upper()
-            if "INDICATIVE SYLLABUS (TIER-I)" in l_upper or "TIER-I" in l_upper:
-                tier = "Tier-1"
-                break
-            elif "INDICATIVE SYLLABUS (TIER-II)" in l_upper or "TIER-II" in l_upper:
-                tier = "Tier-2"
-                break
-        if not tier:
-            tier = "Tier-1"  # default to Tier-1 if not found
-        return "SSC (CGL)", tier
+    # ---------------- IIT JEE ----------------
+    if (
+        "JEE" in text
+        or "IIT" in text
+        or "JOINT ENTRANCE EXAMINATION" in text
+        or "JEE" in filename
+    ):
+        stage = "General"
+        if "MAIN" in text:
+            stage = "JEE Main"
+        elif "ADVANCED" in text:
+            stage = "JEE Advanced"
+        return "IIT JEE", stage
+
     # ---------------- GATE ----------------
-    if "GATE" in text_sample:
+    if "GATE" in text or "GRADUATE APTITUDE TEST" in text or "GATE" in filename:
         branch = None
-        exam = "GATE"
-        for l in lines[:20]:
+
+        # Try to detect branch from headings
+        for l in lines[:25]:
             l_clean = l.strip()
-            if l_clean.isupper() and len(l_clean.split()) <= 3 and "GATE" not in l_clean:
+            if l_clean.isupper() and len(l_clean.split()) <= 4 and "GATE" not in l_clean:
                 branch = l_clean
                 break
+
         if not branch:
-            branch = os.path.splitext(os.path.basename(pdf_path))[0].replace("gate", "").strip().upper()
-        return f"{exam} ({branch})", None
+            branch = os.path.splitext(os.path.basename(pdf_path))[0].upper()
 
-    return "UNKNOWN", None
+        return f"GATE ({branch})", "General"
 
-# -----------------------------
-# 6️⃣ Parse PDFs → JSON
-# -----------------------------
-def pdfs_to_json(pdf_folder):
-    syllabus = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: defaultdict(list))))
-
-    for root, dirs, files in os.walk(pdf_folder):
-        for file in files:
-            if not file.lower().endswith(".pdf"):
-                continue
-
-            pdf_path = os.path.join(root, file)
-            lines = read_pdf_lines(pdf_path)
-            exam, stage = detect_exam_stage(pdf_path, lines)
-            if stage is None:
-                stage = "General"
-
-            current_subject = None
-            current_topic = None
-
-            for line in lines:
-                clean = line.strip()
-
-                # SUBJECT
-                if clean.isupper() and clean.replace(" ", "").isalpha() and len(clean.split()) <= 5:
-                    current_subject = clean.title()
-                    current_topic = None
-                    continue
-
-                # TOPIC
-                if (":" in clean or clean[:2].isdigit() or clean.startswith("-")) and len(clean.split()) <= 12:
-                    current_topic = clean.replace(":", "").strip()
-                    if current_subject:
-                        syllabus[exam][stage][current_subject][current_topic] = []
-                    continue
-
-                # SUBTOPIC
-                if current_subject and current_topic:
-                    parts = [p.strip() for p in clean.split(",") if len(p.strip()) > 3]
-                    syllabus[exam][stage][current_subject][current_topic].extend(parts)
-
-    return syllabus
-
+    return "UNKNOWN", "General"
 
 
 # -----------------------------
@@ -153,6 +103,10 @@ if not syllabus_json:
     st.warning("⚠️ No syllabus detected!")
 else:
     st.success("✅ Syllabus parsed successfully!")
+exam, stage = detect_exam_stage(pdf_path, lines)
+
+if exam == "UNKNOWN":
+    continue
 
 # -----------------------------
 # 8️⃣ Display syllabus
