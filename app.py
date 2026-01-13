@@ -49,7 +49,7 @@ def detect_exam_and_branch(lines):
     if "GATE" in text:
         exam = "GATE"
         branch = None
-        for line in lines[:20]:
+        for line in lines[:100]:
             clean = line.strip()
             if clean.isupper() and len(clean.split()) <= 5 and "GATE" not in clean:
                 branch = clean.title()
