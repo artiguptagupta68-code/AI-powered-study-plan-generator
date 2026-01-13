@@ -1,15 +1,18 @@
 # app.py
+
 import streamlit as st
-import os, zipfile, json
+import os
+import zipfile
 import gdown
 import fitz  # PyMuPDF
 from collections import defaultdict
 from datetime import datetime, timedelta
+import json
 
 # -----------------------------
 # 1️⃣ Configuration
 # -----------------------------
-DRIVE_FILE_ID = "1IRP5upBPCua57WmoEfjn9t6YJQq0_yGB"  # Google Drive ZIP file
+DRIVE_FILE_ID = "1IRP5upBPCua57WmoEfjn9t6YJQq0_yGB"  # Google Drive file ID for syllabus ZIP
 LOCAL_ZIP = "syllabus.zip"
 EXTRACT_DIR = "syllabus_data"
 JSON_OUTPUT = "syllabus.json"
@@ -18,21 +21,14 @@ JSON_OUTPUT = "syllabus.json"
 # 2️⃣ Download ZIP from Google Drive
 # -----------------------------
 if not os.path.exists(LOCAL_ZIP):
-    st.info("⬇️ Downloading syllabus ZIP from Google Drive...")
     gdown.download(f"https://drive.google.com/uc?id={DRIVE_FILE_ID}", LOCAL_ZIP, quiet=False)
-else:
-    st.info("ℹ️ Using existing ZIP file.")
 
-# -----------------------------
-# 3️⃣ Extract ZIP
-# -----------------------------
 os.makedirs(EXTRACT_DIR, exist_ok=True)
 with zipfile.ZipFile(LOCAL_ZIP, 'r') as zip_ref:
     zip_ref.extractall(EXTRACT_DIR)
-st.success(f"📂 ZIP extracted to {EXTRACT_DIR}")
 
 # -----------------------------
-# 4️⃣ PDF reading function
+# 3️⃣ PDF reading function
 # -----------------------------
 def read_pdf_lines(pdf_path):
     doc = fitz.open(pdf_path)
@@ -46,41 +42,48 @@ def read_pdf_lines(pdf_path):
     return lines
 
 # -----------------------------
-# 5️⃣ Detect exam name
+# 4️⃣ Detect exam and GATE branch
 # -----------------------------
-def detect_exam(lines):
-    text = " ".join(lines).upper()
-    if any(k in text for k in ["GATE"]):
-        return "GATE"
+def detect_exam_and_branch(lines):
+    text = " ".join(lines[:50]).upper()
+    if "GATE" in text:
+        exam = "GATE"
+        branch = None
+        for line in lines[:20]:
+            clean = line.strip()
+            if clean.isupper() and len(clean.split()) <= 5 and "GATE" not in clean:
+                branch = clean.title()
+                break
+        if not branch:
+            branch = "Unknown Branch"
+        return exam, branch
     elif any(k in text for k in ["SSC", "CGL"]):
-        return "SSC"
+        return "SSC", "General"
     elif any(k in text for k in ["UPSC", "UNION PUBLIC SERVICE COMMISSION"]):
-        return "UPSC"
+        return "UPSC", "General"
     else:
-        return None
+        return None, None
 
 # -----------------------------
-# 6️⃣ Parse PDFs into JSON
+# 5️⃣ Parse PDFs into JSON
 # -----------------------------
 def pdfs_to_json(pdf_folder):
     syllabus = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
-
     for file in os.listdir(pdf_folder):
         if not file.lower().endswith(".pdf"):
             continue
 
         pdf_path = os.path.join(pdf_folder, file)
         lines = read_pdf_lines(pdf_path)
-        exam = detect_exam(lines)
+        exam, branch = detect_exam_and_branch(lines)
         if not exam:
-            continue  # skip PDFs with unknown exam
+            continue
 
         current_subject = None
         current_topic = None
 
         for line in lines:
             clean = line.strip()
-
             # SUBJECT heuristic
             if clean.isupper() and clean.replace(" ", "").isalpha() and len(clean.split()) <= 5:
                 current_subject = clean.title()
@@ -91,66 +94,67 @@ def pdfs_to_json(pdf_folder):
             if (":" in clean or clean[:2].isdigit() or clean.startswith("-")) and len(clean.split()) <= 12:
                 current_topic = clean.replace(":", "").strip()
                 if current_subject:
-                    syllabus[exam][current_subject][current_topic] = []
+                    syllabus[exam][branch if exam=="GATE" else current_subject][current_topic] = []
                 continue
 
             # SUBTOPIC heuristic
             if current_subject and current_topic:
                 parts = [p.strip() for p in clean.split(",") if len(p.strip()) > 3]
-                syllabus[exam][current_subject][current_topic].extend(parts)
-
+                syllabus[exam][branch if exam=="GATE" else current_subject][current_topic].extend(parts)
     return syllabus
 
 # -----------------------------
-# 7️⃣ Parse and save JSON
+# 6️⃣ Load syllabus JSON
 # -----------------------------
-syllabus_json = pdfs_to_json(EXTRACT_DIR)
-
+syllabus = pdfs_to_json(EXTRACT_DIR)
 with open(JSON_OUTPUT, "w", encoding="utf-8") as f:
-    json.dump(syllabus_json, f, indent=2, ensure_ascii=False)
-st.success("✅ Syllabus parsed and saved!")
+    json.dump(syllabus, f, indent=2, ensure_ascii=False)
 
 # -----------------------------
-# 8️⃣ Streamlit UI: Study Planner
+# 7️⃣ Streamlit UI
 # -----------------------------
-st.title("📚 Adaptive Study Planner")
+st.title("📚 Adaptive Study Planner for UPSC / GATE / SSC")
 
-# 8.1 Exam selection
-exams = [e for e in syllabus_json.keys() if e is not None]
-if not exams:
-    st.warning("⚠️ No exam detected in PDFs!")
+# Study capacity & start date
+capacity = st.number_input("Study capacity today (hours):", min_value=1.0, value=6.0, step=0.5)
+start_date = st.date_input("Start date:")
+
+# Select exam
+exams = list(syllabus.keys())
+exam = st.selectbox("Select Exam:", exams)
+if not exam:
     st.stop()
 
-exam = st.selectbox("Select Exam:", exams)
+# Select branch/subject
+branches_subjects = list(syllabus[exam].keys())
+branch_subject = st.selectbox("Select Branch / Subject:", branches_subjects)
+if not branch_subject:
+    st.stop()
 
-# 8.2 Subject selection
-subjects = list(syllabus_json[exam].keys())
-selected_subjects = st.multiselect("Select Subject(s):", subjects)
-
-# 8.3 Study capacity and start date
-study_capacity = st.number_input("Study capacity per day (hours):", min_value=1.0, value=6.0, step=0.5)
-start_date = st.date_input("Start Preparation From:")
-
-# -----------------------------
-# 9️⃣ Assign Topics and Subtopics
-# -----------------------------
-if st.button("Assign Topics for Today"):
-    assigned = []
-    for subject in selected_subjects:
-        for topic, subtopics in syllabus_json[exam][subject].items():
-            assigned.append((subject, topic, subtopics))
-
-    if assigned:
-        st.subheader("📌 Today's Study Plan")
-        for sub, topic, subtopics in assigned:
-            st.write(f"**{sub} → {topic}**")
-            for s in subtopics:
-                st.write(f"- {s}")
-    else:
-        st.info("No topics found for the selected exam/subjects.")
+# Select topic
+topics = list(syllabus[exam][branch_subject].keys())
+selected_topic = st.selectbox("Select Topic:", topics)
+if selected_topic:
+    subtopics = syllabus[exam][branch_subject][selected_topic]
+    st.write("Subtopics:", subtopics)
 
 # -----------------------------
-# 10️⃣ Optional: Progress Tracking (can be extended)
+# 8️⃣ Daily Planner Assignment
 # -----------------------------
-st.subheader("📊 Progress Tracker")
-st.write("You can extend this section to track completed topics and revisions over days.")
+st.subheader("📌 Assign Topics for Today")
+assigned = []
+
+for topic in topics:
+    if len(assigned) >= capacity:
+        break
+    assigned.append(topic)
+st.write("✅ Topics assigned today:", assigned)
+
+# -----------------------------
+# 9️⃣ Save selected plan (optional)
+# -----------------------------
+plan_file = f"plan_{exam}_{branch_subject}.json"
+daily_plan = {exam: {branch_subject: {t: syllabus[exam][branch_subject][t] for t in assigned}}}
+with open(plan_file, "w", encoding="utf-8") as f:
+    json.dump(daily_plan, f, indent=2, ensure_ascii=False)
+st.success(f"✅ Daily plan saved: {plan_file}")
