@@ -119,6 +119,9 @@ st.success(f"✅ Syllabus parsed and saved as {JSON_OUTPUT}")
 # -----------------------------
 # 8️⃣ Streamlit Study Planner
 # -----------------------------
+# -----------------------------
+# 8️⃣ Streamlit Study Planner
+# -----------------------------
 st.title("📚 Adaptive Study Planner")
 
 # Select start date
@@ -127,26 +130,32 @@ start_date = st.date_input("Select start date for preparation", datetime.today()
 # Select study capacity
 study_hours = st.number_input("Study capacity per day (hours)", min_value=1.0, value=6.0, step=0.5)
 
-# Select exam
+# -----------------------------
+# Select exam (fix)
+# -----------------------------
 available_exams = [e for e in syllabus_json.keys() if e != "UNKNOWN"]
+if not available_exams:
+    st.error("❌ No valid exams detected in syllabus. Check PDFs.")
+    st.stop()
+
 exam = st.selectbox("Select exam:", ["--Select--"] + available_exams)
 
-topic_status = {}
-
+# -----------------------------
+# Proceed only if exam selected
+# -----------------------------
 if exam != "--Select--":
     # Select subjects
     subjects = list(syllabus_json[exam].keys())
+    if not subjects:
+        st.warning(f"No subjects found for {exam}.")
     selected_subjects = st.multiselect("Select subject(s) to start with:", subjects)
 
-    # -----------------------------
-    # Assign topics and subtopics
-    # -----------------------------
-    if st.button("Assign Topics for Today"):
+    # Assign topics for today
+    if st.button("Assign Topics for Today") and selected_subjects:
         topic_status = {}
         for sub in selected_subjects:
             topics = syllabus_json[exam][sub]
             for topic, subtopics in topics.items():
-                # estimate time: 0.1h per subtopic line
                 est_time = max(0.1 * len(subtopics), 0.1)
                 practice_time = round(est_time * 0.3, 2)
                 topic_status[(exam, sub, topic)] = {
@@ -164,6 +173,7 @@ if exam != "--Select--":
             st.write(f"- {k[1]} > {k[2]} | Est: {v['estimated_time']}h, Practice: {v['practice_time']}h")
             for stopic in v['subtopics']:
                 st.write(f"    - {stopic}")
+
 
         # Complete checkboxes
         st.subheader("✅ Mark topics as completed:")
