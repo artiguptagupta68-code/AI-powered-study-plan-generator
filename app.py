@@ -103,10 +103,7 @@ if not syllabus_json:
     st.warning("⚠️ No syllabus detected!")
 else:
     st.success("✅ Syllabus parsed successfully!")
-exam, stage = detect_exam_stage(pdf_path, lines)
 
-if exam == "UNKNOWN":
-    continue
 
 # -----------------------------
 # 8️⃣ Display syllabus
