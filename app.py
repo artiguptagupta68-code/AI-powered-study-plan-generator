@@ -1,12 +1,9 @@
-# -----------------------------
-# app.py (NEET, IIT JEE, GATE)
-# -----------------------------
-
+# app.py
 import streamlit as st
 import os
 import zipfile
 import gdown
-import fitz
+import fitz  # PyMuPDF
 from collections import defaultdict
 from datetime import datetime
 import json
@@ -36,7 +33,7 @@ with zipfile.ZipFile(LOCAL_ZIP, 'r') as zip_ref:
 st.success(f"✅ ZIP extracted to {EXTRACT_DIR}")
 
 # -----------------------------
-# 4️⃣ Read PDF lines
+# 4️⃣ Function to read PDF lines
 # -----------------------------
 def read_pdf_lines(pdf_path):
     doc = fitz.open(pdf_path)
@@ -71,17 +68,18 @@ def detect_exam_stage(pdf_path, lines):
         return "IIT JEE", stage
 
     # -------- GATE --------
-    if "GATE" in folder or "GATE" in filename or "GRADUATE APTITUDE TEST" in text:
-        # detect branch from PDF content
+    if "GATE" in filename or "GATE" in folder or "GRADUATE APTITUDE TEST IN ENGINEERING" in text:
+        # Detect branch from PDF content
         branch = None
         for l in lines:
             l_clean = l.strip()
             if l_clean.isupper() and len(l_clean.split()) <= 5 and "GATE" not in l_clean and not l_clean.isdigit():
                 branch = l_clean
                 break
-        # if branch not found, try from filename
+        # fallback to filename (e.g., "gate 1")
         if not branch:
-            branch = os.path.splitext(filename)[0].replace("GATE", "").replace("_"," ").strip().title()
+            name = os.path.splitext(filename)[0]  # "GATE 1"
+            branch = name.replace("GATE", "").replace("_", " ").strip().title()
             if not branch:
                 branch = "General"
         return "GATE", branch
@@ -94,7 +92,7 @@ def detect_exam_stage(pdf_path, lines):
 def pdfs_to_json(pdf_folder):
     syllabus = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: defaultdict(list))))
 
-    for root, dirs, files in os.walk(pdf_folder):  # recursively read all nested folders
+    for root, dirs, files in os.walk(pdf_folder):
         for file in files:
             if not file.lower().endswith(".pdf"):
                 continue
@@ -103,6 +101,7 @@ def pdfs_to_json(pdf_folder):
             lines = read_pdf_lines(pdf_path)
             exam, stage = detect_exam_stage(pdf_path, lines)
 
+            # skip unknown exams
             if exam == "UNKNOWN":
                 continue
 
@@ -136,19 +135,11 @@ def pdfs_to_json(pdf_folder):
 # 7️⃣ Run parsing
 # -----------------------------
 syllabus_json = pdfs_to_json(EXTRACT_DIR)
-all_syllabus = syllabus_json  # Save in variable
 
 if not syllabus_json:
     st.warning("⚠️ No syllabus detected!")
 else:
     st.success("✅ Syllabus parsed successfully!")
-
-    # Debug GATE
-    if "GATE" in syllabus_json:
-        st.subheader("🔍 GATE Syllabus JSON Debug")
-        st.text(json.dumps(syllabus_json["GATE"], indent=2))
-    else:
-        st.info("ℹ️ No GATE syllabus detected in the ZIP.")
 
 # -----------------------------
 # 8️⃣ Display syllabus
@@ -169,10 +160,8 @@ for exam, stages in syllabus_json.items():
 # -----------------------------
 st.header("📝 Study Planner")
 
-# Start date
 start_date = st.date_input("Select start date:", datetime.today())
 
-# Exam & stage select
 exam_list = list(syllabus_json.keys())
 selected_exam = st.selectbox("Select exam:", exam_list)
 
@@ -183,10 +172,8 @@ if selected_exam:
     subjects = list(syllabus_json[selected_exam][selected_stage].keys())
     selected_subjects = st.multiselect("Select subject(s) to start with:", subjects)
 
-    # Study capacity
     capacity = st.number_input("Study capacity today (hours):", min_value=1.0, value=6.0, step=0.5)
 
-    # Assign topics
     if st.button("Assign Topics"):
         assigned_topics = []
         used_hours = 0
