@@ -9,22 +9,24 @@ from datetime import datetime, timedelta
 import json
 
 # -----------------------------
-# 1️⃣ Streamlit Title
+# 1️⃣ Streamlit Config
 # -----------------------------
+st.set_page_config(page_title="Adaptive Study Planner", layout="wide")
 st.title("📚 Adaptive Study Planner for UPSC / GATE / SSC")
 
 # -----------------------------
-# 2️⃣ Configuration / Inputs
+# 2️⃣ Sidebar Inputs
 # -----------------------------
-DRIVE_FILE_ID = st.text_input("Enter Google Drive file ID for syllabus ZIP:")
+st.sidebar.header("⚙️ Configuration")
+DRIVE_FILE_ID = st.sidebar.text_input("Google Drive ZIP File ID:", "")
 LOCAL_ZIP = "syllabus.zip"
 EXTRACT_DIR = "syllabus_data"
 
-syllabus = {}
-topic_status = {}
+study_capacity = st.sidebar.number_input("Daily study capacity (hours):", min_value=1.0, value=6.0, step=0.5)
+start_date = st.sidebar.date_input("Preparation start date:", value=datetime.today())
 
 # -----------------------------
-# 3️⃣ Download & extract ZIP
+# 3️⃣ Download & Extract ZIP
 # -----------------------------
 if DRIVE_FILE_ID:
     if not os.path.exists(LOCAL_ZIP):
@@ -39,7 +41,7 @@ if DRIVE_FILE_ID:
     st.success(f"✅ ZIP extracted to {EXTRACT_DIR}")
 
 # -----------------------------
-# 4️⃣ PDF reading function
+# 4️⃣ PDF Reading Function
 # -----------------------------
 def read_pdf_lines(pdf_path):
     doc = fitz.open(pdf_path)
@@ -53,7 +55,7 @@ def read_pdf_lines(pdf_path):
     return lines
 
 # -----------------------------
-# 5️⃣ Detect exam and GATE branch
+# 5️⃣ Detect Exam & Branch
 # -----------------------------
 def detect_exam_and_branch(lines):
     text = " ".join(lines[:50]).upper()
@@ -63,7 +65,7 @@ def detect_exam_and_branch(lines):
             if any(kw in line.upper() for kw in ["CSE","EE","ME","CE","EC"]):
                 branch = line.strip()
                 break
-        return "GATE - "+branch
+        return "GATE - " + branch
     if "SSC" in text or "CGL" in text:
         return "SSC"
     if "UPSC" in text or "UNION PUBLIC SERVICE COMMISSION" in text:
@@ -71,7 +73,7 @@ def detect_exam_and_branch(lines):
     return "UNKNOWN"
 
 # -----------------------------
-# 6️⃣ Parse PDFs into JSON
+# 6️⃣ Parse PDFs → JSON
 # -----------------------------
 def pdfs_to_json(pdf_folder):
     syllabus = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
@@ -87,6 +89,7 @@ def pdfs_to_json(pdf_folder):
 
         for line in lines:
             clean = line.strip()
+
             # Subject heuristic
             if clean.isupper() and clean.replace(" ", "").isalpha() and len(clean.split()) <= 5:
                 current_subject = clean.title()
@@ -108,25 +111,14 @@ def pdfs_to_json(pdf_folder):
     return syllabus
 
 # -----------------------------
-# 7️⃣ Run parsing & save JSON
-# -----------------------------
-if os.path.exists(EXTRACT_DIR):
-    syllabus = pdfs_to_json(EXTRACT_DIR)
-    st.success("✅ Syllabus parsed successfully!")
-
-    with open("syllabus.json","w",encoding="utf-8") as f:
-        json.dump(syllabus, f, indent=2, ensure_ascii=False)
-
-# -----------------------------
-# 8️⃣ Build topic_status with estimated time
+# 7️⃣ Build Topic Status
 # -----------------------------
 def build_topic_status(syllabus):
     topic_status = {}
     for exam, subjects in syllabus.items():
         for subject, topics in subjects.items():
             for topic, subtopics in topics.items():
-                # Simple estimated time: 0.2h per subtopic
-                est = max(0.2 * max(len(subtopics),1), 0.5)
+                est = max(0.2 * max(len(subtopics), 1), 0.5)  # 0.2h per subtopic, min 0.5h
                 topic_status[(exam, subject, topic)] = {
                     "subtopics": subtopics,
                     "estimated_time": round(est,2),
@@ -136,8 +128,16 @@ def build_topic_status(syllabus):
                 }
     return topic_status
 
-if syllabus:
+# -----------------------------
+# 8️⃣ Run Parsing
+# -----------------------------
+if os.path.exists(EXTRACT_DIR):
+    syllabus = pdfs_to_json(EXTRACT_DIR)
+    st.success("✅ Syllabus parsed successfully!")
     topic_status = build_topic_status(syllabus)
+
+    with open("syllabus.json","w",encoding="utf-8") as f:
+        json.dump(syllabus, f, indent=2, ensure_ascii=False)
 
 # -----------------------------
 # 9️⃣ Study Planner UI
@@ -145,19 +145,16 @@ if syllabus:
 if topic_status:
     st.subheader("📌 Daily Study Planner")
 
-    # Study capacity & start date
-    capacity = st.number_input("Daily study capacity (hours):", min_value=1.0, value=6.0, step=0.5)
-    start_date = st.date_input("Preparation start date:", value=datetime.today())
-
-    # Select exam & subjects
+    # Select Exam
     exams = list(syllabus.keys())
     selected_exam = st.selectbox("Select Exam:", exams)
 
+    # Select Subjects
     subjects = list(syllabus[selected_exam].keys())
     selected_subjects = st.multiselect("Select Subject(s):", subjects)
 
-    # Assign topics automatically
-    if st.button("Assign Topics"):
+    # Assign Topics
+    if st.button("Assign Topics for Today"):
         assigned = []
         used = 0
         for (exam, subject, topic), info in topic_status.items():
@@ -165,7 +162,7 @@ if topic_status:
                 continue
             if info["status"] != "pending":
                 continue
-            if used + info["estimated_time"] <= capacity:
+            if used + info["estimated_time"] <= study_capacity:
                 assigned.append((subject, topic, info))
                 used += info["estimated_time"]
             else:
@@ -177,7 +174,6 @@ if topic_status:
                 st.write(f"**{subject} → {topic}** (Est: {info['estimated_time']}h)")
                 for stp in info["subtopics"]:
                     st.write(f"- {stp}")
-                # Complete checkbox
                 key = f"{subject}_{topic}"
                 completed = st.checkbox(f"Mark {subject} → {topic} as completed", key=key)
                 if completed:
@@ -189,7 +185,7 @@ if topic_status:
                         datetime.now() + timedelta(days=7)
                     ]
         else:
-            st.info("No topics fit within the daily study capacity or all topics done!")
+            st.info("No topics fit within today's capacity or all topics done!")
 
     # Progress
     total = len(topic_status)
