@@ -52,21 +52,18 @@ def read_pdf_lines(pdf_path):
 def detect_exam_stage(pdf_path, lines):
     text = " ".join(lines[:50]).upper()
     filename = os.path.basename(pdf_path).upper()
+    folder = os.path.basename(os.path.dirname(pdf_path)).upper()
 
     # ---------------- NEET ----------------
-    if (
-        "NEET" in text
-        or "NEET" in filename
-        or "NATIONAL ELIGIBILITY CUM ENTRANCE TEST" in text
-    ):
+    if "NEET" in folder or "NEET" in text or "NEET" in filename:
         return "NEET", "UG"
 
     # ---------------- IIT JEE ----------------
     if (
-        "JEE" in text
+        "JEE" in folder
+        or "JEE" in filename
         or "IIT" in text
         or "JOINT ENTRANCE EXAMINATION" in text
-        or "JEE" in filename
     ):
         stage = "General"
         if "MAIN" in text:
@@ -76,9 +73,9 @@ def detect_exam_stage(pdf_path, lines):
         return "IIT JEE", stage
 
     # ---------------- GATE ----------------
-    if "GATE" in text or "GRADUATE APTITUDE TEST" in text or "GATE" in filename:
+    if "GATE" in folder or "GATE" in filename or "GRADUATE APTITUDE TEST" in text:
         branch = "General"
-        for l in lines[:25]:
+        for l in lines[:30]:
             l_clean = l.strip()
             if l_clean.isupper() and len(l_clean.split()) <= 4 and "GATE" not in l_clean:
                 branch = l_clean
@@ -86,6 +83,7 @@ def detect_exam_stage(pdf_path, lines):
         return "GATE", branch
 
     return "UNKNOWN", "General"
+
 
 
 def pdfs_to_json(pdf_folder):
