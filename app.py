@@ -46,16 +46,19 @@ def read_pdf_lines(pdf_path):
                 lines.append(line)
     return lines
 
+# -----------------------------
+# 5️⃣ Detect exam and stage/tier
+# -----------------------------
 def detect_exam_stage(pdf_path, lines):
-    text = " ".join(lines).upper()  # scan full PDF
+    text = " ".join(lines).upper()  # scan entire PDF
     filename = os.path.basename(pdf_path).upper()
     folder = os.path.basename(os.path.dirname(pdf_path)).upper()
 
-    # NEET
+    # -------- NEET --------
     if "NEET" in folder or "NEET" in text or "NEET" in filename:
         return "NEET", "UG"
 
-    # IIT JEE
+    # -------- IIT JEE --------
     if "JEE" in folder or "JEE" in filename or "IIT" in text or "JOINT ENTRANCE EXAMINATION" in text:
         stage = "General"
         if "MAIN" in text:
@@ -64,9 +67,10 @@ def detect_exam_stage(pdf_path, lines):
             stage = "JEE Advanced"
         return "IIT JEE", stage
 
-    # GATE
+    # -------- GATE --------
     if "GATE" in folder or "GATE" in filename or "GRADUATE APTITUDE TEST" in text:
         branch = None
+        # scan all lines for branch name
         for l in lines:
             l_clean = l.strip()
             if l_clean.isupper() and len(l_clean.split()) <= 5 and "GATE" not in l_clean and not l_clean.isdigit():
@@ -78,15 +82,13 @@ def detect_exam_stage(pdf_path, lines):
 
     return "UNKNOWN", "General"
 
-    
-
 # -----------------------------
 # 6️⃣ Parse PDFs → JSON
 # -----------------------------
 def pdfs_to_json(pdf_folder):
     syllabus = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: defaultdict(list))))
 
-    for root, dirs, files in os.walk(pdf_folder):  # walks all nested folders
+    for root, dirs, files in os.walk(pdf_folder):  # recursively read all nested folders
         for file in files:
             if not file.lower().endswith(".pdf"):
                 continue
@@ -95,7 +97,7 @@ def pdfs_to_json(pdf_folder):
             lines = read_pdf_lines(pdf_path)
             exam, stage = detect_exam_stage(pdf_path, lines)
 
-            # Skip unknown exams
+            # skip unknown exams
             if exam == "UNKNOWN":
                 continue
 
@@ -105,20 +107,20 @@ def pdfs_to_json(pdf_folder):
             for line in lines:
                 clean = line.strip()
 
-                # SUBJECT
+                # SUBJECT: uppercase, <=5 words
                 if clean.isupper() and clean.replace(" ", "").isalpha() and len(clean.split()) <= 5:
                     current_subject = clean.title()
                     current_topic = None
                     continue
 
-                # TOPIC
+                # TOPIC: contains ":" or starts with number or "-"
                 if (":" in clean or clean[:2].isdigit() or clean.startswith("-")) and len(clean.split()) <= 12:
                     current_topic = clean.replace(":", "").strip()
                     if current_subject:
                         syllabus[exam][stage][current_subject][current_topic] = []
                     continue
 
-                # SUBTOPIC
+                # SUBTOPIC: comma-separated, >3 chars
                 if current_subject and current_topic:
                     parts = [p.strip() for p in clean.split(",") if len(p.strip()) > 3]
                     syllabus[exam][stage][current_subject][current_topic].extend(parts)
