@@ -9,10 +9,13 @@ from datetime import datetime, timedelta
 import json
 
 # -----------------------------
-# 1️⃣ Configuration
+# 1️⃣ Streamlit Title
 # -----------------------------
 st.title("📚 Adaptive Study Planner for UPSC / GATE / SSC")
 
+# -----------------------------
+# 2️⃣ Configuration / Inputs
+# -----------------------------
 DRIVE_FILE_ID = st.text_input("Enter Google Drive file ID for syllabus ZIP:")
 LOCAL_ZIP = "syllabus.zip"
 EXTRACT_DIR = "syllabus_data"
@@ -21,7 +24,7 @@ syllabus = {}
 topic_status = {}
 
 # -----------------------------
-# 2️⃣ Download & extract ZIP
+# 3️⃣ Download & extract ZIP
 # -----------------------------
 if DRIVE_FILE_ID:
     if not os.path.exists(LOCAL_ZIP):
@@ -36,7 +39,7 @@ if DRIVE_FILE_ID:
     st.success(f"✅ ZIP extracted to {EXTRACT_DIR}")
 
 # -----------------------------
-# 3️⃣ PDF reading function
+# 4️⃣ PDF reading function
 # -----------------------------
 def read_pdf_lines(pdf_path):
     doc = fitz.open(pdf_path)
@@ -50,13 +53,12 @@ def read_pdf_lines(pdf_path):
     return lines
 
 # -----------------------------
-# 4️⃣ Detect exam and GATE branch
+# 5️⃣ Detect exam and GATE branch
 # -----------------------------
 def detect_exam_and_branch(lines):
     text = " ".join(lines[:50]).upper()
     if "GATE" in text:
         branch = "General"
-        # Try to detect branch
         for line in lines[:10]:
             if any(kw in line.upper() for kw in ["CSE","EE","ME","CE","EC"]):
                 branch = line.strip()
@@ -69,7 +71,7 @@ def detect_exam_and_branch(lines):
     return "UNKNOWN"
 
 # -----------------------------
-# 5️⃣ Parse PDFs into JSON
+# 6️⃣ Parse PDFs into JSON
 # -----------------------------
 def pdfs_to_json(pdf_folder):
     syllabus = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
@@ -85,20 +87,20 @@ def pdfs_to_json(pdf_folder):
 
         for line in lines:
             clean = line.strip()
-            # Subject heuristic: uppercase & short
+            # Subject heuristic
             if clean.isupper() and clean.replace(" ", "").isalpha() and len(clean.split()) <= 5:
                 current_subject = clean.title()
                 current_topic = None
                 continue
 
-            # Topic heuristic: contains ":" or short line
+            # Topic heuristic
             if (":" in clean or clean[:2].isdigit() or clean.startswith("-")) and len(clean.split()) <= 12:
                 current_topic = clean.replace(":", "").strip()
                 if current_subject:
                     syllabus[exam][current_subject][current_topic] = []
                 continue
 
-            # Subtopic
+            # Subtopic heuristic
             if current_subject and current_topic:
                 parts = [p.strip() for p in clean.split(",") if len(p.strip()) > 3]
                 syllabus[exam][current_subject][current_topic].extend(parts)
@@ -106,45 +108,106 @@ def pdfs_to_json(pdf_folder):
     return syllabus
 
 # -----------------------------
-# 6️⃣ Run parsing
+# 7️⃣ Run parsing & save JSON
 # -----------------------------
 if os.path.exists(EXTRACT_DIR):
     syllabus = pdfs_to_json(EXTRACT_DIR)
     st.success("✅ Syllabus parsed successfully!")
 
-    # Save JSON
     with open("syllabus.json","w",encoding="utf-8") as f:
         json.dump(syllabus, f, indent=2, ensure_ascii=False)
 
 # -----------------------------
-# 7️⃣ Streamlit Study Planner
+# 8️⃣ Build topic_status with estimated time
 # -----------------------------
+def build_topic_status(syllabus):
+    topic_status = {}
+    for exam, subjects in syllabus.items():
+        for subject, topics in subjects.items():
+            for topic, subtopics in topics.items():
+                # Simple estimated time: 0.2h per subtopic
+                est = max(0.2 * max(len(subtopics),1), 0.5)
+                topic_status[(exam, subject, topic)] = {
+                    "subtopics": subtopics,
+                    "estimated_time": round(est,2),
+                    "status": "pending",
+                    "last_studied": None,
+                    "next_revision": []
+                }
+    return topic_status
+
 if syllabus:
-    st.subheader("📌 Study Planner")
+    topic_status = build_topic_status(syllabus)
 
-    # Study capacity
-    capacity = st.number_input("Enter daily study capacity (hours):", min_value=1.0, value=6.0, step=0.5)
+# -----------------------------
+# 9️⃣ Study Planner UI
+# -----------------------------
+if topic_status:
+    st.subheader("📌 Daily Study Planner")
 
-    # Start date
-    start_date = st.date_input("Select preparation start date:", value=datetime.today())
+    # Study capacity & start date
+    capacity = st.number_input("Daily study capacity (hours):", min_value=1.0, value=6.0, step=0.5)
+    start_date = st.date_input("Preparation start date:", value=datetime.today())
 
-    # Select exam
+    # Select exam & subjects
     exams = list(syllabus.keys())
     selected_exam = st.selectbox("Select Exam:", exams)
 
-    # Select subjects
     subjects = list(syllabus[selected_exam].keys())
-    selected_subjects = st.multiselect("Select subject(s) to start with:", subjects)
+    selected_subjects = st.multiselect("Select Subject(s):", subjects)
 
-    # Build topics list
-    topics_list = []
-    for sub in selected_subjects:
-        for topic, subtopics in syllabus[selected_exam][sub].items():
-            topics_list.append((sub, topic, subtopics))
-
+    # Assign topics automatically
     if st.button("Assign Topics"):
-        st.write(f"📌 Topics assigned for {selected_exam}:")
-        for sub, topic, subtopics in topics_list:
-            st.write(f"**{sub} → {topic}**")
-            for stp in subtopics:
-                st.write(f"- {stp}")
+        assigned = []
+        used = 0
+        for (exam, subject, topic), info in topic_status.items():
+            if exam != selected_exam or subject not in selected_subjects:
+                continue
+            if info["status"] != "pending":
+                continue
+            if used + info["estimated_time"] <= capacity:
+                assigned.append((subject, topic, info))
+                used += info["estimated_time"]
+            else:
+                break
+
+        if assigned:
+            st.write(f"📌 Topics assigned for {selected_exam} today:")
+            for subject, topic, info in assigned:
+                st.write(f"**{subject} → {topic}** (Est: {info['estimated_time']}h)")
+                for stp in info["subtopics"]:
+                    st.write(f"- {stp}")
+                # Complete checkbox
+                key = f"{subject}_{topic}"
+                completed = st.checkbox(f"Mark {subject} → {topic} as completed", key=key)
+                if completed:
+                    info["status"] = "completed"
+                    info["last_studied"] = datetime.now()
+                    info["next_revision"] = [
+                        datetime.now() + timedelta(days=1),
+                        datetime.now() + timedelta(days=3),
+                        datetime.now() + timedelta(days=7)
+                    ]
+        else:
+            st.info("No topics fit within the daily study capacity or all topics done!")
+
+    # Progress
+    total = len(topic_status)
+    completed = len([v for v in topic_status.values() if v["status"]=="completed"])
+    pending_count = len([v for v in topic_status.values() if v["status"]=="pending"])
+    st.subheader("📊 Progress")
+    st.write(f"Total: {total} | Completed: {completed} | Pending: {pending_count}")
+
+    # Revision due today
+    now = datetime.now()
+    due = []
+    for (exam, subject, topic), info in topic_status.items():
+        if info["status"]=="completed":
+            for rev in info["next_revision"]:
+                if now >= rev:
+                    due.append((subject, topic, info))
+                    break
+    if due:
+        st.subheader("🕑 Topics due for revision today:")
+        for subject, topic, info in due:
+            st.write(f"**{subject} → {topic}**")
