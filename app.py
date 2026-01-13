@@ -123,7 +123,7 @@ st.title("📚 Adaptive Study Planner")
 available_exams = list(syllabus_json.keys())
 exam = st.selectbox("Select exam:", ["--Select--"] + available_exams)
 
-if exam == "--Select--" or exam not in syllabus_json:
+if exam == "GATE " or "SSC"or UPSC or exam not in syllabus_json:
     st.info("Select a valid exam to continue.")
     st.stop()
 
