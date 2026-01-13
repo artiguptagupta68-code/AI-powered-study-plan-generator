@@ -127,7 +127,7 @@ def pdfs_to_json(pdf_folder):
 
     return syllabus
 
-# -----------------------------
+# # -----------------------------
 # 7️⃣ Run parsing
 # -----------------------------
 syllabus_json = pdfs_to_json(EXTRACT_DIR)
@@ -136,6 +136,16 @@ if not syllabus_json:
     st.warning("⚠️ No syllabus detected!")
 else:
     st.success("✅ Syllabus parsed successfully!")
+
+    # -----------------------------
+    # 🔹 DEBUG: Print GATE syllabus
+    # -----------------------------
+    if "GATE" in syllabus_json:
+        st.subheader("🔍 GATE Syllabus JSON Debug")
+        st.text(json.dumps(syllabus_json["GATE"], indent=2))
+    else:
+        st.info("ℹ️ No GATE syllabus detected in the ZIP.")
+
 
 # -----------------------------
 # 8️⃣ Display syllabus
