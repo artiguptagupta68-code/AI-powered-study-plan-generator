@@ -74,9 +74,9 @@ def detect_exam_stage(pdf_path, lines):
             if l_clean.isupper() and len(l_clean.split()) <= 5 and "GATE" not in l_clean and not l_clean.isdigit():
                 branch = l_clean
                 break
-     if not branch:
-        branch = "General"  # fallback if branch not found
-        return "GATE", branch
+                if not branch:
+                    branch = "General"  # fallback if branch not found
+                    return "GATE", branch
 
 
     return "UNKNOWN", "General"
