@@ -68,20 +68,21 @@ def detect_exam_stage(pdf_path, lines):
         return "IIT JEE", stage
 
     # ---------------- GATE ----------------
+    # ---------------- GATE ----------------
     if "GATE" in folder or "GATE" in filename or "GRADUATE APTITUDE TEST" in text:
-        # Try to detect branch from PDF content
         branch = None
-        for l in lines[:50]:  # check first 50 lines
+    # Scan the entire PDF lines for branch heading
+        for l in lines:
             l_clean = l.strip()
-            if l_clean.isupper() and len(l_clean.split()) <= 5 and "GATE" not in l_clean:
+        # Branch is usually uppercase, short (<=5 words), not the word 'GATE'
+            if l_clean.isupper() and len(l_clean.split()) <= 5 and "GATE" not in l_clean and not l_clean.isdigit():
                 branch = l_clean
                 break
-        # If no branch found, use filename as branch
-        if not branch:
-            branch = os.path.splitext(filename)[0].replace("GATE", "").replace("_", " ").strip()
-            if not branch:
-                branch = "General"
+    if not branch:
+        branch = "General"  # fallback if branch not found
         return "GATE", branch
+
+       
 
     return "UNKNOWN", "General"
 
