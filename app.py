@@ -46,6 +46,9 @@ def read_pdf_lines(pdf_path):
                 lines.append(line)
     return lines
 
+# -----------------------------
+# 5️⃣ Detect exam and stage/tier
+# -----------------------------
 def detect_exam_stage(pdf_path, lines):
     text = " ".join(lines[:50]).upper()
     filename = os.path.basename(pdf_path).upper()
@@ -68,7 +71,7 @@ def detect_exam_stage(pdf_path, lines):
     if "GATE" in folder or "GATE" in filename or "GRADUATE APTITUDE TEST" in text:
         # Try to detect branch from PDF content
         branch = None
-        for l in lines[:50]:  # check first 50 lines for branch
+        for l in lines[:50]:  # check first 50 lines
             l_clean = l.strip()
             if l_clean.isupper() and len(l_clean.split()) <= 5 and "GATE" not in l_clean:
                 branch = l_clean
@@ -81,7 +84,6 @@ def detect_exam_stage(pdf_path, lines):
         return "GATE", branch
 
     return "UNKNOWN", "General"
-
 
 # -----------------------------
 # 6️⃣ Parse PDFs → JSON
