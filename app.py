@@ -47,27 +47,34 @@ def read_pdf_lines(pdf_path):
     return lines
 
 # -----------------------------
-# 5️⃣ Detect exam and stage
+# 5️⃣ Detect exam and stage/tier
 # -----------------------------
 def detect_exam_stage(pdf_path, lines):
     text_sample = " ".join(lines[:50]).upper()
 
     # UPSC
-    for line in lines[:5]:
-        if "SYLLABUS OF COMBINED GEO-SCIENTIST" in line.upper() or "UNION PUBLIC SERVICE COMMISSION" in line.upper():
-            # Determine stage
-            stage = "Preliminary" if any("PRELIMINARY" in l.upper() for l in lines[:10]) else "Main"
-            return "UPSC", stage
+    if any("UNION PUBLIC SERVICE COMMISSION" in l.upper() for l in lines[:5]):
+        stage = None
+        for l in lines:
+            if "PRELIMINARY" in l.upper():
+                stage = "Stage-1"
+                break
+            elif "MAIN" in l.upper() or "STAGE-2" in l.upper():
+                stage = "Stage-2"
+                break
+        if stage is None:
+            stage = "Stage-1"
+        return "UPSC", stage
 
     # SSC CGL
     if "COMBINED GRADUATE LEVEL EXAMINATION" in text_sample:
         tier = None
         for l in lines:
             if "INDICATIVE SYLLABUS (TIER-I)" in l.upper():
-                tier = "Tier-I"
+                tier = "Tier-1"
                 break
             elif "INDICATIVE SYLLABUS (TIER-II)" in l.upper():
-                tier = "Tier-II"
+                tier = "Tier-2"
                 break
         if not tier:
             tier = "General"
@@ -89,7 +96,7 @@ def detect_exam_stage(pdf_path, lines):
     return "UNKNOWN", None
 
 # -----------------------------
-# 6️⃣ Parse PDFs → JSON with stages
+# 6️⃣ Parse PDFs → JSON
 # -----------------------------
 def pdfs_to_json(pdf_folder):
     syllabus = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: defaultdict(list))))
@@ -159,10 +166,10 @@ for exam, stages in syllabus_json.items():
 # -----------------------------
 st.header("📝 Study Planner")
 
-# 9.1 Start date
+# Start date
 start_date = st.date_input("Select start date:", datetime.today())
 
-# 9.2 Select exam & stage
+# Exam & stage select
 exam_list = list(syllabus_json.keys())
 selected_exam = st.selectbox("Select exam:", exam_list)
 
@@ -173,10 +180,10 @@ if selected_exam:
     subjects = list(syllabus_json[selected_exam][selected_stage].keys())
     selected_subjects = st.multiselect("Select subject(s) to start with:", subjects)
 
-    # 9.3 Study capacity
+    # Study capacity
     capacity = st.number_input("Study capacity today (hours):", min_value=1.0, value=6.0, step=0.5)
 
-    # 9.4 Assign topics
+    # Assign topics
     if st.button("Assign Topics"):
         assigned_topics = []
         used_hours = 0
