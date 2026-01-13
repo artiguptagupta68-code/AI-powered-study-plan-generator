@@ -46,9 +46,9 @@ def read_pdf_lines(pdf_path):
                 lines.append(line)
     return lines
 
-
-
-
+# -----------------------------
+# 5️⃣ Detect exam and stage/tier
+# -----------------------------
 def detect_exam_stage(pdf_path, lines):
     text = " ".join(lines[:50]).upper()
     filename = os.path.basename(pdf_path).upper()
@@ -59,12 +59,7 @@ def detect_exam_stage(pdf_path, lines):
         return "NEET", "UG"
 
     # ---------------- IIT JEE ----------------
-    if (
-        "JEE" in folder
-        or "JEE" in filename
-        or "IIT" in text
-        or "JOINT ENTRANCE EXAMINATION" in text
-    ):
+    if "JEE" in folder or "JEE" in filename or "IIT" in text or "JOINT ENTRANCE EXAMINATION" in text:
         stage = "General"
         if "MAIN" in text:
             stage = "JEE Main"
@@ -84,12 +79,13 @@ def detect_exam_stage(pdf_path, lines):
 
     return "UNKNOWN", "General"
 
-
-
+# -----------------------------
+# 6️⃣ Parse PDFs → JSON
+# -----------------------------
 def pdfs_to_json(pdf_folder):
     syllabus = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: defaultdict(list))))
 
-    for root, dirs, files in os.walk(pdf_folder):
+    for root, dirs, files in os.walk(pdf_folder):  # walks all nested folders
         for file in files:
             if not file.lower().endswith(".pdf"):
                 continue
@@ -101,9 +97,6 @@ def pdfs_to_json(pdf_folder):
             # Skip unknown exams
             if exam == "UNKNOWN":
                 continue
-
-            if stage is None:
-                stage = "General"
 
             current_subject = None
             current_topic = None
@@ -140,7 +133,6 @@ if not syllabus_json:
     st.warning("⚠️ No syllabus detected!")
 else:
     st.success("✅ Syllabus parsed successfully!")
-
 
 # -----------------------------
 # 8️⃣ Display syllabus
