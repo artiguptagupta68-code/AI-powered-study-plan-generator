@@ -31,7 +31,7 @@ if "recompute_needed" not in st.session_state:
     st.session_state.recompute_needed = True
 
 # -------------------------------------------------
-# LOAD PROGRESS SAFELY
+# LOAD PROGRESS
 # -------------------------------------------------
 if os.path.exists(STATE_FILE):
     try:
@@ -142,7 +142,7 @@ def build_queue():
                     "subject": s,
                     "subtopic": sub,
                     "time_h": est,
-                    "time_min": round(est * 60)
+                    "time_min": round(est*60)
                 })
     return q
 
@@ -151,9 +151,9 @@ if selected_subjects and not st.session_state.remaining_queue:
     st.session_state.recompute_needed = True
 
 # -------------------------------------------------
-# RECOMPUTE CALENDAR (ONLY ON SUBTOPIC COMPLETION)
+# RECOMPUTE CALENDAR (CARRY FORWARD LOGIC)
 # -------------------------------------------------
-if st.session_state.recompute_needed and st.session_state.remaining_queue:
+def recompute_calendar():
     queue = deque(st.session_state.remaining_queue or [])
     calendar = []
     cur_date = datetime.combine(start_date, datetime.min.time())
@@ -165,19 +165,16 @@ if st.session_state.recompute_needed and st.session_state.remaining_queue:
         while queue and rem > 0:
             item = queue.popleft()
             alloc = min(item["time_h"], rem)
-
             plan.append({
                 "subject": item["subject"],
                 "subtopic": item["subtopic"],
                 "time_h": alloc,
-                "time_min": round(alloc * 60)
+                "time_min": round(alloc*60)
             })
-
             rem -= alloc
             item["time_h"] -= alloc
-
             if item["time_h"] > 0:
-                queue.appendleft(item)
+                queue.appendleft(item)  # carry forward
 
         calendar.append({"date": cur_date, "plan": plan})
         cur_date += timedelta(days=1)
@@ -186,8 +183,11 @@ if st.session_state.recompute_needed and st.session_state.remaining_queue:
     st.session_state.remaining_queue = queue
     st.session_state.recompute_needed = False
 
+if st.session_state.recompute_needed:
+    recompute_calendar()
+
 # -------------------------------------------------
-# DISPLAY CALENDAR WITH DAY COMPLETED CHECKBOX
+# DISPLAY CALENDAR WITH DAY COMPLETED
 # -------------------------------------------------
 st.header("📆 Study Calendar")
 
@@ -211,6 +211,7 @@ for tab, (_, days) in zip(tabs, weeks.items()):
 
             # Show subtopics ONLY if day completed
             if st.session_state[day_key]:
+                day_time_used = 0
                 with st.container():
                     for i, s in enumerate(day.get("plan", []) or []):
                         key = f"{day['date']}_{s['subject']}_{s['subtopic']}"
@@ -223,15 +224,22 @@ for tab, (_, days) in zip(tabs, weeks.items()):
                         ):
                             if key not in st.session_state.completed_subtopics:
                                 st.session_state.completed_subtopics.add(key)
+                        else:
+                            # Carry forward uncompleted
+                            st.session_state.remaining_queue.append({
+                                "subject": s["subject"],
+                                "subtopic": s["subtopic"],
+                                "time_h": s["time_h"],
+                                "time_min": s["time_min"]
+                            })
 
-                                # Remove completed subtopic from remaining queue
-                                st.session_state.remaining_queue = deque(
-                                    item for item in st.session_state.remaining_queue
-                                    if item["subtopic"] != s["subtopic"]
-                                )
+                        day_time_used += s["time_h"]
 
-                                # Trigger recompute for next days
-                                st.session_state.recompute_needed = True
+                # Warning if daily assignment not completed
+                if day_time_used < daily_hours:
+                    extra_days = round((daily_hours - day_time_used)/daily_hours,1)
+                    st.warning(f"⚠️ Your target to complete the subject is being increased by {extra_days} day(s).")
+                    st.session_state.recompute_needed = True
 
 # -------------------------------------------------
 # SAVE STATE
