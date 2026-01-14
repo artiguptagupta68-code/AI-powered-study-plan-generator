@@ -3,21 +3,21 @@ import streamlit as st
 import os, zipfile, gdown, fitz, re
 from collections import defaultdict
 from datetime import datetime, timedelta
-import random
 
 st.set_page_config(page_title="Smart Study Planner", layout="wide")
 
 # -----------------------------
-# Configuration
+# CONFIGURATION
 # -----------------------------
 DRIVE_FILE_ID = "1S6fcsuq9KvICTsOBOdp6_WN9FhzruixM"
 ZIP_PATH = "plan.zip"
 EXTRACT_DIR = "syllabus_data"
 
-# Download & extract ZIP
+# -----------------------------
+# DOWNLOAD & EXTRACT ZIP
+# -----------------------------
 if not os.path.exists(ZIP_PATH):
-    with st.spinner("⬇️ Downloading syllabus ZIP..."):
-        gdown.download(f"https://drive.google.com/uc?id={DRIVE_FILE_ID}", ZIP_PATH, quiet=False)
+    gdown.download(f"https://drive.google.com/uc?id={DRIVE_FILE_ID}", ZIP_PATH, quiet=False)
 
 if not os.path.exists(EXTRACT_DIR):
     os.makedirs(EXTRACT_DIR, exist_ok=True)
@@ -25,14 +25,16 @@ if not os.path.exists(EXTRACT_DIR):
         zip_ref.extractall(EXTRACT_DIR)
 
 # -----------------------------
-# Read PDF and clean garbage
+# PDF READING & CLEANING
 # -----------------------------
 def is_garbage(line):
-    l = line.lower()
-    keywords = ["annexure","government of india","national medical commission",
-                "medical education","ugmeb","neet (ug exam)","date:","sector",
-                "dwarka","new delhi","pocket-","phase-","board)","exam)"]
-    if any(k in l for k in keywords):
+    l=line.lower()
+    garbage_keywords=[
+        "annexure","government of india","national medical commission",
+        "medical education","ugmeb","neet (ug exam)","date:","sector",
+        "dwarka","new delhi","pocket-","phase-","board)","exam)"
+    ]
+    if any(k in l for k in garbage_keywords):
         return True
     if re.match(r"[a-z]-\d+/\d+", l):
         return True
@@ -43,7 +45,7 @@ def is_garbage(line):
     return False
 
 def read_pdf_lines(path):
-    doc = fitz.open(path)
+    doc=fitz.open(path)
     lines=[]
     for page in doc:
         for line in page.get_text().split("\n"):
@@ -53,19 +55,16 @@ def read_pdf_lines(path):
     return lines
 
 # -----------------------------
-# Detect Exam & Stage/Branch
+# DETECT EXAM
 # -----------------------------
 def detect_exam(path, lines):
     text=" ".join(lines).upper()
     filename=os.path.basename(path).upper()
     folder=os.path.basename(os.path.dirname(path)).upper()
-
     if "NEET" in text or "NEET" in filename or "NEET" in folder:
         return "NEET","UG"
     if "JEE" in text or "IIT" in text:
-        if "ADVANCED" in text:
-            return "IIT JEE","JEE Advanced"
-        return "IIT JEE","JEE Main"
+        return "IIT JEE","JEE Advanced" if "ADVANCED" in text else "JEE Main"
     if "GATE" in text or "GRADUATE APTITUDE TEST" in text:
         branch="General"
         for l in lines:
@@ -76,7 +75,7 @@ def detect_exam(path, lines):
     return None,None
 
 # -----------------------------
-# Parse syllabus
+# PARSE SYLLABUS
 # -----------------------------
 def parse_syllabus(root_dir):
     syllabus=defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: defaultdict(list))))
@@ -109,9 +108,6 @@ def parse_syllabus(root_dir):
                     syllabus[exam][stage][current_subject][current_topic].extend(parts)
     return syllabus
 
-# -----------------------------
-# Build syllabus
-# -----------------------------
 syllabus=parse_syllabus(EXTRACT_DIR)
 
 if not syllabus:
@@ -119,74 +115,70 @@ if not syllabus:
     st.stop()
 
 # -----------------------------
-# Session state
+# SESSION STATE
 # -----------------------------
 if "queue" not in st.session_state: st.session_state.queue=[]
-if "remaining" not in st.session_state: st.session_state.remaining=0
 if "today" not in st.session_state: st.session_state.today=datetime.today()
+if "remaining" not in st.session_state: st.session_state.remaining=0
 
 # -----------------------------
 # UI
 # -----------------------------
-st.title("📚 Smart Competitive Exam Study Planner 💡")
+st.title("📚 Smart Competitive Study Planner")
 
+# Select exam and subject(s)
 exam_list=list(syllabus.keys())
 selected_exam=st.selectbox("Select Exam",exam_list)
 stage_list=list(syllabus[selected_exam].keys())
 selected_stage=st.selectbox("Select Stage / Branch",stage_list)
 subjects=list(syllabus[selected_exam][selected_stage].keys())
-selected_subject=st.selectbox("Select Subject",subjects)
+selected_subjects=st.multiselect("Select Subject(s)",subjects)
 
-capacity=st.number_input("Available study hours today",min_value=1.0,value=6.0,step=0.5)
+# Enter study capacity
+capacity=st.number_input("Enter your study hours today",min_value=1.0,value=6.0,step=0.5)
 
 # -----------------------------
-# Build study queue with automatic subtopic timings
+# ASSIGN SUBTOPICS AUTOMATICALLY
 # -----------------------------
-if st.button("Load Subtopics"):
+if st.button("Assign Today's Subtopics"):
     st.session_state.queue=[]
     st.session_state.remaining=capacity
-    st.session_state.today=datetime.today()
-    for topic, subs in syllabus[selected_exam][selected_stage][selected_subject].items():
-        for sub in subs:
-            # assign time based on subtopic length
-            words=len(sub.split())
-            time=max(0.25,min(1.5,0.25 + words/80))  # 0.25h short, 1.5h long
-            st.session_state.queue.append({
-                "topic":topic,
-                "subtopic":sub,
-                "time":round(time,2),
-                "done":False
-            })
+    for subject in selected_subjects:
+        for topic,subs in syllabus[selected_exam][selected_stage][subject].items():
+            for sub in subs:
+                # Time estimate based on length
+                time=max(0.25,min(1.5,0.25 + len(sub.split())/80))
+                st.session_state.queue.append({
+                    "subject":subject,
+                    "topic":topic,
+                    "subtopic":sub,
+                    "time":round(time,2),
+                    "done":False
+                })
 
 # -----------------------------
-# Display today's plan
+# DISPLAY TODAY'S PLAN
 # -----------------------------
 if st.session_state.queue:
-    st.subheader(f"📌 Study Plan for {selected_subject} ({selected_exam})")
-    today=st.session_state.today
-    st.write(f"📅 Date: {today.strftime('%Y-%m-%d')}")
+    st.subheader(f"📌 Today's Study Plan ({len(selected_subjects)} subject(s))")
     remaining=st.session_state.remaining
 
     for idx,item in enumerate(st.session_state.queue):
         if remaining<=0: break
         if not item["done"]:
             if item["time"]<=remaining:
-                checked=st.checkbox(f"{item['topic']} → {item['subtopic']} ({item['time']}h)",key=item['subtopic']+str(idx))
-                if checked: st.session_state.queue[idx]['done']=True
+                checked=st.checkbox(f"{item['subtopic']} ({item['time']}h)",key=str(idx))
+                if checked: st.session_state.queue[idx]["done"]=True
                 remaining-=item["time"]
             else:
-                st.checkbox(f"{item['topic']} → {item['subtopic']} ({item['time']}h, Not enough time today)",key="skip"+str(idx))
-    
+                st.checkbox(f"{item['subtopic']} ({item['time']}h ⏳ Not enough time today)",key="skip"+str(idx))
+
     st.session_state.remaining=remaining
 
-    # Move to next day automatically
+    # Carryover: incomplete subtopics remain in queue for next day
+    st.progress(sum(1 for s in st.session_state.queue if s["done"])/len(st.session_state.queue))
+    st.caption(f"{sum(1 for s in st.session_state.queue if s['done'])}/{len(st.session_state.queue)} subtopics completed ✅")
     if remaining<=0 or all([s["done"] for s in st.session_state.queue]):
         st.session_state.today+=timedelta(days=1)
         st.session_state.remaining=capacity
-        st.info("⏩ Moving to next day!")
-
-    # Progress bar
-    done_count=sum(1 for s in st.session_state.queue if s["done"])
-    total=len(st.session_state.queue)
-    st.progress(done_count/total)
-    st.caption(f"{done_count}/{total} subtopics completed ✅")
+        st.info(f"⏩ Moving to next day: {st.session_state.today.strftime('%Y-%m-%d')}")
