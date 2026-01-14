@@ -109,50 +109,51 @@ def parse_syllabus(root_dir):
     return syllabus
 
 syllabus_json = parse_syllabus(EXTRACT_DIR)
-
 if not syllabus_json:
     st.error("⚠️ No syllabus detected!")
     st.stop()
 
 # -----------------------------
-# APP UI
+# UI: Select Exam & Subjects
 # -----------------------------
 st.title("📅 Competitive Exam Study Planner Calendar")
 
-# Step 1: Select exam
 selected_exam = st.selectbox("Select Exam", list(syllabus_json.keys()))
 
-# Step 2: Select subjects with priority
-available_subjects = list(syllabus_json[selected_exam].keys())
-priority_subjects = st.multiselect("Select Subject(s) by Priority", available_subjects)
+available_stages = list(syllabus_json[selected_exam].keys())
+selected_stage = st.selectbox("Select Stage / Branch", available_stages)
 
-# Step 3: Enter study capacity
+available_subjects = list(syllabus_json[selected_exam][selected_stage].keys())
+selected_subjects = st.multiselect("Select Subjects (priority order)", available_subjects)
+
 capacity = st.number_input("Enter your daily study capacity (hours)", min_value=1.0, value=6.0, step=0.5)
 
 # -----------------------------
-# BUILD SUBTOPIC QUEUE WITH TIME
+# BUILD SUBTOPIC QUEUE
 # -----------------------------
-def build_subtopic_queue(exam, subjects):
+def build_subtopic_queue(exam, stage, subjects):
     queue = deque()
     for subj in subjects:
-        for topic, subs in syllabus_json[exam][subj].items():
-            weight = max(0.5, 0.2 * len(subs))  # time weight per subtopic
+        for topic, subs in syllabus_json[exam][stage][subj].items():
             for sub in subs:
-                queue.append({"subject":subj, "subtopic":sub, "time":weight})
+                # Time estimation: 0.3h base + 0.2h per word in subtopic
+                est_time = 0.3 + 0.05 * len(sub.split())
+                queue.append({"subject":subj, "subtopic":sub, "time":est_time})
     return queue
 
-# Step 4: Generate Calendar
-if priority_subjects:
-    subtopic_queue = build_subtopic_queue(selected_exam, priority_subjects)
+# -----------------------------
+# GENERATE CALENDAR
+# -----------------------------
+if selected_subjects:
+    subtopic_queue = build_subtopic_queue(selected_exam, selected_stage, selected_subjects)
     calendar = []
     current_date = datetime.today()
-    
+
     while subtopic_queue:
         day_plan = []
         remaining_time = capacity
         temp_queue = deque()
-        
-        # Fill today's schedule
+
         while subtopic_queue:
             item = subtopic_queue.popleft()
             if item["time"] <= remaining_time:
@@ -161,19 +162,19 @@ if priority_subjects:
             else:
                 temp_queue.appendleft(item)
                 break
-        
-        # Carryover
+
         subtopic_queue = temp_queue + subtopic_queue
-        calendar.append({"date": current_date.strftime("%Y-%m-%d"), "plan": day_plan})
+        calendar.append({"date": current_date, "plan": day_plan})
         current_date += timedelta(days=1)
 
     # -----------------------------
     # DISPLAY CALENDAR
     # -----------------------------
+    st.header("📆 Study Calendar")
     for day in calendar:
-        st.subheader(f"📌 {day['date']} Study Plan")
+        st.subheader(f"📌 {day['date'].strftime('%A, %d %b %Y')}")
         if day['plan']:
             for s in day['plan']:
-                st.write(f"- {s['subject']} → {s['subtopic']} ({s['time']:.1f}h)")
+                st.checkbox(f"{s['subject']} → {s['subtopic']} ({s['time']:.1f}h)")
         else:
-            st.write("Rest day / No subtopics assigned")
+            st.info("Rest day / No subtopics assigned")
