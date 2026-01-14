@@ -187,7 +187,7 @@ if st.session_state.recompute_needed and st.session_state.remaining_queue:
     st.session_state.recompute_needed = False
 
 # -------------------------------------------------
-# DISPLAY CALENDAR
+# DISPLAY CALENDAR WITH DAY COMPLETED CHECKBOX
 # -------------------------------------------------
 st.header("📆 Study Calendar")
 
@@ -202,26 +202,36 @@ for tab, (_, days) in zip(tabs, weeks.items()):
         for day in days:
             st.subheader(day["date"].strftime("%A, %d %b %Y"))
 
-            for i, s in enumerate(day.get("plan", []) or []):
-                key = f"{day['date']}_{s['subject']}_{s['subtopic']}"
-                checked = key in st.session_state.completed_subtopics
+            # Day completed checkbox
+            day_key = f"day_completed_{day['date']}"
+            if day_key not in st.session_state:
+                st.session_state[day_key] = False
 
-                if st.checkbox(
-                    f"{s['subject']} → {s['subtopic']} ({s['time_min']} min)",
-                    value=checked,
-                    key=key
-                ):
-                    if key not in st.session_state.completed_subtopics:
-                        st.session_state.completed_subtopics.add(key)
+            st.checkbox("✅ Mark this day as completed", value=st.session_state[day_key], key=day_key)
 
-                        # Remove completed subtopic from remaining queue
-                        st.session_state.remaining_queue = deque(
-                            item for item in st.session_state.remaining_queue
-                            if item["subtopic"] != s["subtopic"]
-                        )
+            # Show subtopics ONLY if day completed
+            if st.session_state[day_key]:
+                with st.container():
+                    for i, s in enumerate(day.get("plan", []) or []):
+                        key = f"{day['date']}_{s['subject']}_{s['subtopic']}"
+                        checked = key in st.session_state.completed_subtopics
 
-                        # Trigger recompute
-                        st.session_state.recompute_needed = True
+                        if st.checkbox(
+                            f"{s['subject']} → {s['subtopic']} ({s['time_min']} min)",
+                            value=checked,
+                            key=key
+                        ):
+                            if key not in st.session_state.completed_subtopics:
+                                st.session_state.completed_subtopics.add(key)
+
+                                # Remove completed subtopic from remaining queue
+                                st.session_state.remaining_queue = deque(
+                                    item for item in st.session_state.remaining_queue
+                                    if item["subtopic"] != s["subtopic"]
+                                )
+
+                                # Trigger recompute for next days
+                                st.session_state.recompute_needed = True
 
 # -------------------------------------------------
 # SAVE STATE
