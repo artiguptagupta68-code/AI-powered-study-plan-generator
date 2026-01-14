@@ -1,46 +1,42 @@
-# app.py
 import streamlit as st
 import os
 import zipfile
 import gdown
 import fitz
 from collections import defaultdict
-import json
 
-# -----------------------------
+# --------------------------------
 # CONFIG
-# -----------------------------
+# --------------------------------
 DRIVE_FILE_ID = "1S6fcsuq9KvICTsOBOdp6_WN9FhzruixM"
-ZIP_PATH = "syllabus.zip"
+ZIP_FILE = "syllabus.zip"
 EXTRACT_DIR = "syllabus_data"
 
-st.set_page_config(page_title="GATE Syllabus Viewer", layout="wide")
-st.title("📘 GATE Syllabus Viewer")
+st.set_page_config("Syllabus Viewer", layout="wide")
+st.title("📚 Exam Syllabus Viewer")
 
-# -----------------------------
+# --------------------------------
 # DOWNLOAD ZIP
-# -----------------------------
-if not os.path.exists(ZIP_PATH):
-    with st.spinner("⬇️ Downloading syllabus ZIP from Google Drive..."):
+# --------------------------------
+if not os.path.exists(ZIP_FILE):
+    with st.spinner("⬇️ Downloading syllabus ZIP..."):
         gdown.download(
             f"https://drive.google.com/uc?id={DRIVE_FILE_ID}",
-            ZIP_PATH,
+            ZIP_FILE,
             quiet=False
         )
-    st.success("✅ ZIP downloaded")
-else:
-    st.info("ℹ️ ZIP already downloaded")
+    st.success("ZIP downloaded")
 
-# -----------------------------
+# --------------------------------
 # EXTRACT ZIP
-# -----------------------------
+# --------------------------------
 os.makedirs(EXTRACT_DIR, exist_ok=True)
-with zipfile.ZipFile(ZIP_PATH, "r") as z:
+with zipfile.ZipFile(ZIP_FILE, "r") as z:
     z.extractall(EXTRACT_DIR)
 
-# -----------------------------
-# READ PDF
-# -----------------------------
+# --------------------------------
+# PDF READER
+# --------------------------------
 def read_pdf_lines(path):
     doc = fitz.open(path)
     lines = []
@@ -51,98 +47,94 @@ def read_pdf_lines(path):
                 lines.append(l)
     return lines
 
-# -----------------------------
-# DETECT GATE BRANCH
-# -----------------------------
-def detect_gate_branch(lines):
-    for l in lines:
-        if (
-            l.isupper()
-            and len(l.split()) <= 5
-            and "GATE" not in l
-            and not l.isdigit()
-        ):
-            return l
-    return "General"
-
-# -----------------------------
-# PARSE ONLY GATE PDFs
-# -----------------------------
-def parse_gate_syllabus(root):
-    gate_json = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+# --------------------------------
+# PARSE ALL SYLLABUS
+# --------------------------------
+def parse_all_syllabus(root):
+    syllabus = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
 
     for root_dir, _, files in os.walk(root):
         for file in files:
             if not file.lower().endswith(".pdf"):
                 continue
 
-            if not file.lower().startswith("gate"):
-                continue  # ONLY gate PDFs
-
             pdf_path = os.path.join(root_dir, file)
             lines = read_pdf_lines(pdf_path)
 
-            branch = detect_gate_branch(lines)
+            filename = file.lower()
+            folder = os.path.basename(root_dir).lower()
 
-            subject = topic = None
+            # ---------------- NEET ----------------
+            if "neet" in folder:
+                exam = "NEET"
+                subject = None
 
-            for line in lines:
-                # SUBJECT
-                if (
-                    line.isupper()
-                    and line.replace(" ", "").isalpha()
-                    and len(line.split()) <= 5
-                ):
-                    subject = line.title()
-                    topic = None
-                    continue
+                for line in lines:
+                    if line.isupper() and len(line.split()) <= 4:
+                        subject = line.title()
+                        continue
+                    if subject:
+                        syllabus[exam][subject]["Topics"].append(line)
 
-                # TOPIC
-                if (":" in line or line[:2].isdigit()) and subject:
-                    topic = line.replace(":", "").strip()
-                    gate_json[branch][subject][topic] = []
-                    continue
+            # ---------------- IIT JEE ----------------
+            elif "jee" in filename:
+                exam = "IIT JEE"
+                subject = None
 
-                # SUBTOPIC
-                if subject and topic:
-                    gate_json[branch][subject][topic].append(line)
+                for line in lines:
+                    if line.isupper() and len(line.split()) <= 4:
+                        subject = line.title()
+                        continue
+                    if subject:
+                        syllabus[exam][subject]["Topics"].append(line)
 
-    return gate_json
+            # ---------------- GATE ----------------
+            elif filename.startswith("gate"):
+                exam = "GATE"
+                branch = "General"
 
-# -----------------------------
-# RUN PARSING
-# -----------------------------
-gate_syllabus = parse_gate_syllabus(EXTRACT_DIR)
+                for l in lines[:30]:
+                    if l.isupper() and len(l.split()) <= 4 and "GATE" not in l:
+                        branch = l
+                        break
 
-if not gate_syllabus:
-    st.error("❌ No GATE syllabus detected in ZIP")
+                subject = None
+                for line in lines:
+                    if line.isupper() and len(line.split()) <= 4:
+                        subject = line.title()
+                        continue
+                    if subject:
+                        syllabus[f"{exam} ({branch})"][subject]["Topics"].append(line)
+
+    return syllabus
+
+# --------------------------------
+# RUN PARSER
+# --------------------------------
+syllabus_json = parse_all_syllabus(EXTRACT_DIR)
+
+if not syllabus_json:
+    st.error("❌ No syllabus detected")
     st.stop()
 
-st.success(f"✅ GATE branches detected: {', '.join(gate_syllabus.keys())}")
-
-# -----------------------------
+# --------------------------------
 # UI
-# -----------------------------
+# --------------------------------
 st.sidebar.header("🎯 Select")
 
-branch = st.sidebar.selectbox("Branch", list(gate_syllabus.keys()))
+exam = st.sidebar.selectbox("Exam", list(syllabus_json.keys()))
 subject = st.sidebar.selectbox(
-    "Subject", list(gate_syllabus[branch].keys())
+    "Subject", list(syllabus_json[exam].keys())
 )
 
-st.header(f"🧠 Branch: {branch}")
-st.subheader(f"📚 Subject: {subject}")
+st.header(f"📘 {exam}")
+st.subheader(f"📖 {subject}")
 
-for topic, subtopics in gate_syllabus[branch][subject].items():
-    with st.expander(f"📌 {topic}"):
-        if subtopics:
-            for s in subtopics:
-                st.write(f"- {s}")
-        else:
-            st.write("No subtopics listed")
+for topic in syllabus_json[exam][subject]["Topics"]:
+    st.write(f"- {topic}")
 
-# -----------------------------
+# --------------------------------
 # DEBUG
-# -----------------------------
-with st.expander("🔍 View Raw GATE JSON"):
-    st.json(gate_syllabus)
+# --------------------------------
+with st.expander("🔍 View Full JSON"):
+    st.json(syllabus_json)
