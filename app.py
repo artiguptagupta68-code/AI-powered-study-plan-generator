@@ -103,7 +103,6 @@ selected_subjects = st.multiselect("Subjects (priority order)", subjects)
 
 start_date = st.date_input("📆 Start Date", datetime.today())
 total_days = st.number_input("🗓️ Total days to finish syllabus", min_value=7, value=90)
-
 daily_hours = st.number_input("⏱️ Daily study hours", min_value=1.0, value=6.0)
 
 st.markdown("### Optional: Custom days per subject")
@@ -134,20 +133,17 @@ def build_queue():
                 })
     return q
 
-# -------------------------------------------------
-# PLAN GENERATION
-# -------------------------------------------------
 if selected_subjects:
     queue = build_queue()
     calendar = []
     cur_date = datetime.combine(start_date, datetime.min.time())
-
-    subject_day_used = defaultdict(set)
+    total_extra_days = 0
 
     for day_idx in range(total_days):
         rem_h = daily_hours
         plan = []
 
+        # Add subtopics until daily_hours filled
         while queue and rem_h > 0:
             item = queue.popleft()
             alloc = min(item["time_h"], rem_h)
@@ -159,55 +155,49 @@ if selected_subjects:
             rem_h -= alloc
             item["time_h"] -= alloc
             if item["time_h"] > 0:
-                queue.appendleft(item)
+                # Put back remaining part at the end
+                queue.append(item)
+                total_extra_days += 1  # counting extra partial time as extra day
 
         calendar.append({"date": cur_date, "plan": plan})
         cur_date += timedelta(days=1)
 
     # -------------------------------------------------
-    # WEEKLY VIEW
+    # DISPLAY CALENDAR
     # -------------------------------------------------
     st.header("📆 Study Calendar")
 
-    weeks = defaultdict(list)
-    for d in calendar:
-        weeks[d["date"].isocalendar().week].append(d)
+    for day in calendar:
+        st.subheader(day["date"].strftime("%A, %d %b %Y"))
 
-    tabs = st.tabs([f"Week {i+1}" for i in range(len(weeks))])
+        day_time_used = 0
+        for i, s in enumerate(day.get("plan", [])):
+            key = f"{day['date']}_{i}_{s['subtopic']}"
+            checked = key in st.session_state.completed_subtopics
 
-    for tab, (_, days) in zip(tabs, weeks.items()):
-        with tab:
-            for d_idx, day in enumerate(days):
-                st.subheader(day["date"].strftime("%A, %d %b %Y"))
+            if st.checkbox(
+                f"{s['subject']} → {s['subtopic']} ({s['time_min']} min)",
+                value=checked,
+                key=key
+            ):
+                st.session_state.completed_subtopics.add(key)
+            else:
+                # if user unticks, push back to queue for next day
+                queue.append({
+                    "subject": s["subject"],
+                    "subtopic": s["subtopic"],
+                    "time_h": s["time_h"],
+                    "time_min": s["time_min"]
+                })
+                total_extra_days += 1
 
-                for i, s in enumerate(day["plan"]):
-                    key = f"{day['date']}_{i}_{s['subtopic']}"
-                    checked = key in st.session_state.completed_subtopics
-
-                    if st.checkbox(
-                        f"{s['subject']} → {s['subtopic']} ({s['time_min']} min)",
-                        value=checked,
-                        key=key
-                    ):
-                        st.session_state.completed_subtopics.add(key)
-                        subject_day_used[s["subject"]].add(day["date"])
-                    else:
-                        st.session_state.completed_subtopics.discard(key)
+            day_time_used += s["time_h"]
 
     # -------------------------------------------------
-    # PROGRESS
+    # WARNING: overall extended time
     # -------------------------------------------------
-    st.header("📊 Subject Progress")
-
-    cols = st.columns(len(selected_subjects))
-    for col, s in zip(cols, selected_subjects):
-        total = subject_days[s] if subject_days[s] > 0 else total_days // len(selected_subjects)
-        done = len(subject_day_used[s])
-        remain = max(0, total - done)
-
-        col.markdown(f"### {s}")
-        col.progress(done / total if total else 0)
-        col.caption(f"⏳ {remain} days remaining")
+    if total_extra_days > 0:
+        st.warning(f"⚠️ Your overall time to complete the subjects may be extended by {total_extra_days} day(s) due to incomplete subtopics.")
 
 # -------------------------------------------------
 # SAVE STATE
