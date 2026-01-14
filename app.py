@@ -57,7 +57,9 @@ def is_garbage_line(line: str) -> bool:
         "pocket-",
         "phase-",
         "board)",
-        "exam)"
+        "exam)",
+        "Secretary",
+        "Public Notice"
     ]
 
     if any(k in l for k in garbage_keywords):
