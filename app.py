@@ -16,15 +16,12 @@ st.set_page_config("📚 Study Planner", layout="wide")
 # ----------------- SESSION STATE -----------------
 if "completed_subtopics" not in st.session_state:
     st.session_state.completed_subtopics = set()
-
-if "remaining_queue" not in st.session_state or st.session_state.remaining_queue is None:
+if "remaining_queue" not in st.session_state:
     st.session_state.remaining_queue = deque()
-
-if "calendar_cache" not in st.session_state or st.session_state.calendar_cache is None:
+if "calendar_cache" not in st.session_state:
     st.session_state.calendar_cache = []
-
-if "subject_days_used" not in st.session_state:
-    st.session_state.subject_days_used = defaultdict(int)
+if "recompute_needed" not in st.session_state:
+    st.session_state.recompute_needed = True
 
 # ----------------- LOAD PROGRESS -----------------
 if os.path.exists(STATE_FILE):
@@ -38,7 +35,6 @@ if os.path.exists(STATE_FILE):
 # ----------------- DOWNLOAD & EXTRACT -----------------
 if not os.path.exists(ZIP_PATH):
     gdown.download(f"https://drive.google.com/uc?id={DRIVE_FILE_ID}", ZIP_PATH)
-
 if not os.path.exists(EXTRACT_DIR):
     with zipfile.ZipFile(ZIP_PATH, "r") as z:
         z.extractall(EXTRACT_DIR)
@@ -100,7 +96,6 @@ start_date = st.date_input("📆 Start Date", datetime.today())
 total_days = st.number_input("🗓️ Total preparation days", min_value=7, value=90)
 daily_hours = st.number_input("⏱️ Daily study hours", min_value=1.0, value=6.0)
 
-# Optional: custom days per subject
 st.markdown("### Optional: Custom days per subject")
 subject_days = {}
 for s in selected_subjects:
@@ -125,7 +120,7 @@ def build_queue():
 if selected_subjects and not st.session_state.remaining_queue:
     st.session_state.remaining_queue = build_queue()
 
-# ----------------- GENERATE CALENDAR WITH CARRY-FORWARD -----------------
+# ----------------- GENERATE CALENDAR -----------------
 def generate_calendar():
     queue = deque(st.session_state.remaining_queue)
     calendar = []
@@ -135,10 +130,10 @@ def generate_calendar():
         rem = daily_hours
         plan = []
 
-        # 1️⃣ Add carried forward first
-        carry_forward_items = [i for i in queue if i.get("carry_forward", False)]
-        for item in carry_forward_items:
-            if rem <= 0: break
+        # sequentially fill plan up to daily_hours
+        idx = 0
+        while queue and rem > 0:
+            item = queue.popleft()
             alloc = min(item["time_h"], rem)
             plan.append({
                 **item,
@@ -147,25 +142,10 @@ def generate_calendar():
             })
             rem -= alloc
             item["time_h"] -= alloc
-            if item["time_h"] <= 0:
-                queue.remove(item)
-
-        # 2️⃣ Add new subtopics
-        new_items = [i for i in queue if not i.get("carry_forward", False)]
-        for item in new_items:
-            if rem <= 0: break
-            alloc = min(item["time_h"], rem)
-            plan.append({
-                **item,
-                "time_h": alloc,
-                "time_min": round(alloc*60)
-            })
-            rem -= alloc
-            item["time_h"] -= alloc
-            if item["time_h"] <= 0:
-                queue.remove(item)
-            else:
+            if item["time_h"] > 0:
                 item["carry_forward"] = True
+                queue.append(item)
+            idx += 1
 
         calendar.append({"date": cur_date, "plan": plan})
         cur_date += timedelta(days=1)
@@ -187,7 +167,7 @@ for day in st.session_state.calendar_cache:
         key = hashlib.md5(raw_key.encode()).hexdigest()
         checked = key in st.session_state.completed_subtopics
 
-        # Label with Carried Forward badge
+        # Label with carry forward badge
         label = f"{s['subject']} → {s['subtopic']} ({s['time_min']} min)"
         if s.get("carry_forward", False):
             label = f"🟡 [Carried Forward] {label}"
@@ -196,7 +176,6 @@ for day in st.session_state.calendar_cache:
             if key not in st.session_state.completed_subtopics:
                 st.session_state.completed_subtopics.add(key)
         else:
-            # carry forward uncompleted subtopic
             st.session_state.remaining_queue.append({
                 "subject": s["subject"],
                 "subtopic": s["subtopic"],
@@ -208,7 +187,7 @@ for day in st.session_state.calendar_cache:
 
     # Warning if daily assignment not completed
     if day_time_used < daily_hours:
-        extra_days = round((daily_hours - day_time_used)/daily_hours,1)
+        extra_days = round((daily_hours - day_time_used)/daily_hours, 1)
         st.warning(f"⚠️ Your target to complete the subject is being increased by {extra_days} day(s).")
 
 # ----------------- SAVE STATE -----------------
