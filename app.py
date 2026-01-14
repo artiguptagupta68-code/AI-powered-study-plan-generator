@@ -124,6 +124,11 @@ available_stages = list(syllabus_json[selected_exam].keys())
 selected_stage = st.selectbox("Select Stage / Branch", available_stages)
 available_subjects = list(syllabus_json[selected_exam][selected_stage].keys())
 selected_subjects = st.multiselect("Select Subjects (priority order)", available_subjects)
+
+# -----------------------------
+# USER INPUT: Total days to finish syllabus
+# -----------------------------
+total_days = st.number_input("Enter the number of days to complete the syllabus", min_value=1, value=30, step=1)
 capacity = st.number_input("Enter your daily study capacity (hours)", min_value=1.0, value=6.0, step=0.5)
 
 # -----------------------------
@@ -147,8 +152,7 @@ def build_subject_time_map(exam, stage, subjects):
 if selected_subjects:
     subject_times, subject_subtopics = build_subject_time_map(selected_exam, selected_stage, selected_subjects)
     total_study_time = sum(subject_times.values())
-    total_days = int((total_study_time / capacity) + 0.999)  # ceil to nearest day
-    st.info(f"🗓️ Estimated total days to complete syllabus: {total_days} days")
+    st.info(f"🗓️ Total syllabus requires approximately {total_study_time:.1f} hours of study")
 
     # -----------------------------
     # PROGRESSIVE PRIORITY CALENDAR
@@ -159,7 +163,7 @@ if selected_subjects:
 
     for day_index in range(total_days):
         day_plan = []
-        day_progress = day_index / total_days  # 0 → start, 1 → end
+        day_progress = day_index / total_days
         dynamic_weights = []
         for i in range(num_subjects):
             initial_weight = num_subjects - i
@@ -191,7 +195,7 @@ if selected_subjects:
     # DASHBOARD: Interactive Checklist + Visual Calendar
     # -----------------------------
     if 'completed_subtopics' not in st.session_state:
-        st.session_state.completed_subtopics = set()  # track completed subtopics
+        st.session_state.completed_subtopics = set()
 
     # Assign colors
     subject_colors = {}
@@ -244,7 +248,6 @@ if selected_subjects:
 
         df_calendar = pd.DataFrame(calendar_rows)
 
-        # Color cells
         def color_cells_progress(val, subj):
             if val and val != "":
                 return f'background-color: {subject_colors[subj]}; color: black; font-weight: bold'
@@ -254,7 +257,6 @@ if selected_subjects:
         styled_df = df_calendar.style.apply(lambda x: [color_cells_progress(v, x.name) for v in x], axis=0)
         st.dataframe(styled_df, height=600)
 
-        # Remaining time per subject
         st.subheader("⏳ Remaining Study Time per Subject")
         for subj, remaining in subject_remaining.items():
             st.markdown(f"**{subj}: {remaining:.1f}h remaining**")
