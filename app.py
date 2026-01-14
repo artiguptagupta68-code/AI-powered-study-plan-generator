@@ -4,7 +4,9 @@ import os, zipfile, gdown, fitz, re, json
 from collections import defaultdict, deque
 from datetime import datetime, timedelta
 
-# ---------------- CONFIG ----------------
+# =================================================
+# CONFIG
+# =================================================
 DRIVE_FILE_ID = "1S6fcsuq9KvICTsOBOdp6_WN9FhzruixM"
 ZIP_PATH = "plan.zip"
 EXTRACT_DIR = "syllabus_data"
@@ -12,22 +14,43 @@ STATE_FILE = "progress.json"
 
 MIN_SUBTOPIC_H = 0.33  # 20 minutes
 
-st.set_page_config("📚 Study Planner", layout="wide")
+st.set_page_config("📚 Smart Study Planner", layout="wide")
 
-# ---------------- STATE ----------------
+# =================================================
+# SESSION STATE INIT
+# =================================================
 if "completed_subtopics" not in st.session_state:
     st.session_state.completed_subtopics = set()
 
-if "completed_days" not in st.session_state:
-    st.session_state.completed_days = set()
+if "base_queue" not in st.session_state:
+    st.session_state.base_queue = None
 
+if "remaining_queue" not in st.session_state:
+    st.session_state.remaining_queue = None
+
+if "calendar" not in st.session_state:
+    st.session_state.calendar = None
+
+if "recompute_needed" not in st.session_state:
+    st.session_state.recompute_needed = False
+
+# =================================================
+# LOAD STATE (BACKWARD SAFE)
+# =================================================
 if os.path.exists(STATE_FILE):
-    with open(STATE_FILE, "r") as f:
-        data = json.load(f)
-        st.session_state.completed_subtopics = set(data.get("subs", []))
-        st.session_state.completed_days = set(data.get("days", []))
+    try:
+        with open(STATE_FILE, "r") as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            st.session_state.completed_subtopics = set(data)
+        elif isinstance(data, dict):
+            st.session_state.completed_subtopics = set(data.get("subs", []))
+    except Exception:
+        st.session_state.completed_subtopics = set()
 
-# ---------------- DOWNLOAD ----------------
+# =================================================
+# DOWNLOAD & EXTRACT
+# =================================================
 if not os.path.exists(ZIP_PATH):
     gdown.download(f"https://drive.google.com/uc?id={DRIVE_FILE_ID}", ZIP_PATH)
 
@@ -35,12 +58,14 @@ if not os.path.exists(EXTRACT_DIR):
     with zipfile.ZipFile(ZIP_PATH, "r") as z:
         z.extractall(EXTRACT_DIR)
 
-# ---------------- PDF PARSE ----------------
-def read_pdf(p):
-    doc = fitz.open(p)
+# =================================================
+# PDF PARSING
+# =================================================
+def read_pdf(path):
+    doc = fitz.open(path)
     lines = []
-    for page in doc:
-        for l in page.get_text().split("\n"):
+    for p in doc:
+        for l in p.get_text().split("\n"):
             l = l.strip()
             if l and len(l) < 120:
                 lines.append(l)
@@ -62,32 +87,37 @@ def parse_syllabus(root):
             exam, stage = detect_exam(lines)
             if not exam: continue
 
-            subj, topic = None, None
+            subject, topic = None, None
             for l in lines:
                 if l.isupper():
-                    subj = l.title()
-                elif ":" in l and subj:
+                    subject = l.title()
+                elif ":" in l and subject:
                     topic = l.replace(":", "").strip()
-                elif subj and topic:
+                elif subject and topic:
                     for p in l.split(","):
-                        data[exam][stage][subj].append(p.strip())
+                        if len(p.strip()) > 3:
+                            data[exam][stage][subject].append(p.strip())
     return data
 
 syllabus = parse_syllabus(EXTRACT_DIR)
 
-# ---------------- UI ----------------
+# =================================================
+# UI INPUTS
+# =================================================
 st.title("📅 Smart Study Planner")
 
-exam = st.selectbox("Exam", syllabus.keys())
-stage = st.selectbox("Stage", syllabus[exam].keys())
+exam = st.selectbox("Select Exam", syllabus.keys())
+stage = st.selectbox("Select Stage", syllabus[exam].keys())
 subjects = list(syllabus[exam][stage].keys())
-selected_subjects = st.multiselect("Subjects (priority order)", subjects)
+selected_subjects = st.multiselect("Select Subjects (priority order)", subjects)
 
 start_date = st.date_input("Start Date", datetime.today())
-total_days = st.number_input("Total Days", min_value=7, value=60)
+total_days = st.number_input("Total Preparation Days", min_value=7, value=60)
 daily_hours = st.number_input("Daily Study Hours", min_value=1.0, value=6.0)
 
-# ---------------- BUILD QUEUE ----------------
+# =================================================
+# BUILD BASE QUEUE (ONCE)
+# =================================================
 def build_queue():
     q = deque()
     for s in selected_subjects:
@@ -101,77 +131,82 @@ def build_queue():
             })
     return q
 
-queue = build_queue()
+if selected_subjects and st.session_state.base_queue is None:
+    st.session_state.base_queue = build_queue()
+    st.session_state.remaining_queue = deque(st.session_state.base_queue)
+    st.session_state.recompute_needed = True
 
-# ---------------- CALENDAR ----------------
-calendar = []
-cur = datetime.combine(start_date, datetime.min.time())
+# =================================================
+# RECOMPUTE CALENDAR (ONLY WHEN NEEDED)
+# =================================================
+if st.session_state.recompute_needed and st.session_state.remaining_queue:
+    calendar = []
+    cur = datetime.combine(start_date, datetime.min.time())
+    queue = deque(st.session_state.remaining_queue)
 
-for d in range(total_days):
-    remaining = daily_hours
-    plan = []
+    for _ in range(total_days):
+        remaining = daily_hours
+        plan = []
 
-    while queue and remaining > 0:
-        item = queue.popleft()
-        alloc = min(item["time_h"], remaining)
+        while queue and remaining > 0:
+            item = queue.popleft()
+            alloc = min(item["time_h"], remaining)
 
-        plan.append({
-            "subject": item["subject"],
-            "subtopic": item["subtopic"],
-            "time_h": alloc,
-            "time_min": round(alloc * 60)
-        })
-
-        remaining -= alloc
-        item["time_h"] -= alloc
-
-        if item["time_h"] > 0:
-            queue.appendleft(item)
-
-    calendar.append({"date": cur, "plan": plan})
-    cur += timedelta(days=1)
-
-# ---------------- DISPLAY ----------------
-st.header("📆 Study Calendar")
-
-for day_idx, day in enumerate(calendar):
-    st.subheader(day["date"].strftime("%A, %d %b %Y"))
-
-    day_key = f"DAY_{day['date']}"
-
-    incomplete_today = []
-
-    for i, s in enumerate(day["plan"]):
-        key = f"{day_idx}_{i}_{s['subtopic']}"
-        checked = key in st.session_state.completed_subtopics
-
-        if st.checkbox(
-            f"{s['subject']} → {s['subtopic']} ({s['time_min']} min)",
-            value=checked,
-            key=key
-        ):
-            st.session_state.completed_subtopics.add(key)
-        else:
-            incomplete_today.append(s)
-
-    # -------- DAY COMPLETED ----------
-    if st.checkbox("✅ Mark Day as Completed", key=day_key):
-        st.session_state.completed_days.add(day_key)
-
-        # Carry forward unfinished
-        for item in reversed(incomplete_today):
-            queue.appendleft({
+            plan.append({
                 "subject": item["subject"],
                 "subtopic": item["subtopic"],
-                "time_h": item["time_h"],
-                "time_min": item["time_min"]
+                "time_h": alloc,
+                "time_min": round(alloc * 60)
             })
 
-        st.success("Day locked. Unfinished topics shifted forward.")
+            remaining -= alloc
+            item["time_h"] -= alloc
 
-# ---------------- SAVE STATE ----------------
+            if item["time_h"] > 0:
+                queue.appendleft(item)
+
+        calendar.append({"date": cur, "plan": plan})
+        cur += timedelta(days=1)
+
+    st.session_state.calendar = calendar
+    st.session_state.remaining_queue = queue
+    st.session_state.recompute_needed = False
+
+# =================================================
+# DISPLAY CALENDAR
+# =================================================
+if st.session_state.calendar:
+    st.header("📆 Study Calendar")
+
+    for day_idx, day in enumerate(st.session_state.calendar):
+        st.subheader(day["date"].strftime("%A, %d %b %Y"))
+
+        for item_idx, s in enumerate(day["plan"]):
+            key = f"{day_idx}_{item_idx}_{s['subtopic']}"
+            checked = key in st.session_state.completed_subtopics
+
+            if st.checkbox(
+                f"{s['subject']} → {s['subtopic']} ({s['time_min']} min)",
+                value=checked,
+                key=key
+            ):
+                if key not in st.session_state.completed_subtopics:
+                    st.session_state.completed_subtopics.add(key)
+
+                    # remove completed subtopic from remaining queue
+                    st.session_state.remaining_queue = deque(
+                        i for i in st.session_state.remaining_queue
+                        if i["subtopic"] != s["subtopic"]
+                    )
+
+                    st.session_state.recompute_needed = True
+
+# =================================================
+# SAVE STATE
+# =================================================
 with open(STATE_FILE, "w") as f:
-    json.dump({
-        "subs": list(st.session_state.completed_subtopics),
-        "days": list(st.session_state.completed_days)
-    }, f)
+    json.dump(
+        {"subs": list(st.session_state.completed_subtopics)},
+        f,
+        indent=2
+    )
