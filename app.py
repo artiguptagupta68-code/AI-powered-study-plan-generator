@@ -1,6 +1,6 @@
 # app.py
 import streamlit as st
-import os, zipfile, gdown, fitz, json
+import os, zipfile, gdown, fitz, json, hashlib
 from collections import defaultdict, deque
 from datetime import datetime, timedelta
 
@@ -163,8 +163,9 @@ def recompute_calendar():
         rem = daily_hours
         plan = []
 
-        while queue and rem > 0:
-            item = queue.popleft()
+        for idx, item in enumerate(list(queue)):
+            if rem <= 0:
+                break
             alloc = min(item["time_h"], rem)
             plan.append({
                 "subject": item["subject"],
@@ -175,9 +176,10 @@ def recompute_calendar():
             })
             rem -= alloc
             item["time_h"] -= alloc
-            if item["time_h"] > 0:
+            if item["time_h"] <= 0:
+                queue.remove(item)
+            else:
                 item["carry_forward"] = True
-                queue.appendleft(item)  # carry forward
 
         calendar.append({"date": cur_date, "plan": plan})
         cur_date += timedelta(days=1)
@@ -217,7 +219,9 @@ for tab, (_, days) in zip(tabs, weeks.items()):
                 day_time_used = 0
                 with st.container():
                     for i, s in enumerate(day.get("plan", []) or []):
-                        key = f"{day['date']}_{i}_{s['subject']}_{s['subtopic']}"
+                        # HASHED UNIQUE KEY
+                        raw_key = f"{day['date']}_{s['subject']}_{s['subtopic']}_{i}"
+                        key = hashlib.md5(raw_key.encode()).hexdigest()
                         checked = key in st.session_state.completed_subtopics
 
                         # Label with Carried Forward badge
