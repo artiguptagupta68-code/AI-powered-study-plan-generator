@@ -1,6 +1,6 @@
 # app.py
 import streamlit as st
-import os, zipfile, gdown, fitz, re, json
+import os, zipfile, gdown, fitz, json
 from collections import defaultdict, deque
 from datetime import datetime, timedelta
 
@@ -21,6 +21,10 @@ st.set_page_config("📚 Study Planner", layout="wide")
 if "completed_subtopics" not in st.session_state:
     st.session_state.completed_subtopics = set()
 
+if "calendar_cache" not in st.session_state:
+    st.session_state.calendar_cache = []
+
+# Load progress
 if os.path.exists(STATE_FILE):
     with open(STATE_FILE, "r") as f:
         st.session_state.completed_subtopics = set(json.load(f))
@@ -111,12 +115,6 @@ for s in selected_subjects:
     subject_days[s] = st.number_input(f"{s} days", min_value=0, value=0)
 
 # -------------------------------------------------
-# COLORS
-# -------------------------------------------------
-COLORS = ["#4CAF50","#2196F3","#FF9800","#9C27B0","#009688","#E91E63"]
-subject_color = {s: COLORS[i % len(COLORS)] for i, s in enumerate(selected_subjects)}
-
-# -------------------------------------------------
 # BUILD QUEUE
 # -------------------------------------------------
 def build_queue():
@@ -143,7 +141,6 @@ if selected_subjects:
         rem_h = daily_hours
         plan = []
 
-        # Add subtopics until daily_hours filled
         while queue and rem_h > 0:
             item = queue.popleft()
             alloc = min(item["time_h"], rem_h)
@@ -155,49 +152,74 @@ if selected_subjects:
             rem_h -= alloc
             item["time_h"] -= alloc
             if item["time_h"] > 0:
-                # Put back remaining part at the end
                 queue.append(item)
-                total_extra_days += 1  # counting extra partial time as extra day
+                total_extra_days += 1
 
         calendar.append({"date": cur_date, "plan": plan})
         cur_date += timedelta(days=1)
 
+    st.session_state.calendar_cache = calendar
+
     # -------------------------------------------------
-    # DISPLAY CALENDAR
+    # DISPLAY CALENDAR WITH DAY COMPLETED BUTTON
     # -------------------------------------------------
     st.header("📆 Study Calendar")
-
-    for day in calendar:
+    for day_idx, day in enumerate(st.session_state.calendar_cache):
         st.subheader(day["date"].strftime("%A, %d %b %Y"))
+        day_keys = []
 
-        day_time_used = 0
         for i, s in enumerate(day.get("plan", [])):
             key = f"{day['date']}_{i}_{s['subtopic']}"
             checked = key in st.session_state.completed_subtopics
+            day_keys.append((key, s))
 
-            if st.checkbox(
-                f"{s['subject']} → {s['subtopic']} ({s['time_min']} min)",
-                value=checked,
-                key=key
-            ):
+            if st.checkbox(f"{s['subject']} → {s['subtopic']} ({s['time_min']} min)", value=checked, key=key):
                 st.session_state.completed_subtopics.add(key)
             else:
-                # if user unticks, push back to queue for next day
-                queue.append({
-                    "subject": s["subject"],
-                    "subtopic": s["subtopic"],
-                    "time_h": s["time_h"],
-                    "time_min": s["time_min"]
-                })
-                total_extra_days += 1
+                st.session_state.completed_subtopics.discard(key)
 
-            day_time_used += s["time_h"]
+        # Day Completed Button
+        if st.button(f"✅ Mark {day['date'].strftime('%d %b %Y')} as Completed", key=f"day_done_{day_idx}"):
+            carry_forward = []
+            for key, s in day_keys:
+                if key not in st.session_state.completed_subtopics:
+                    carry_forward.append(s)
+
+            if day_idx + 1 < len(st.session_state.calendar_cache):
+                st.session_state.calendar_cache[day_idx + 1]["plan"] = carry_forward + st.session_state.calendar_cache[day_idx + 1]["plan"]
+            else:
+                new_day = {"date": day["date"] + timedelta(days=1), "plan": carry_forward}
+                st.session_state.calendar_cache.append(new_day)
+
+            st.success(f"Unticked subtopics carried forward to next day")
+            total_extra_days += len(carry_forward)
 
     # -------------------------------------------------
-    # WARNING: overall extended time
+    # PROGRESS
+    # -------------------------------------------------
+    st.header("📊 Subject Progress")
+    subject_day_used = defaultdict(int)
+    for day in st.session_state.calendar_cache:
+        for s in day.get("plan", []):
+            key = f"{day['date']}_{s['subject']}_{s['subtopic']}"
+            if key in st.session_state.completed_subtopics:
+                subject_day_used[s["subject"]] += 1
+
+    cols = st.columns(len(selected_subjects))
+    for col, s in zip(cols, selected_subjects):
+        total = subject_days[s] if subject_days[s] > 0 else total_days // len(selected_subjects)
+        done = subject_day_used[s]
+        remain = max(0, total - done)
+
+        col.markdown(f"### {s}")
+        col.progress(done / total if total else 0)
+        col.caption(f"⏳ {remain} days remaining")
+
+    # -------------------------------------------------
+    # FINAL WARNING
     # -------------------------------------------------
     if total_extra_days > 0:
-        st.warning(f"⚠️ Your overall time to complete the subjects may be extended by {total_extra_days} day(s) due to incomplete subtopics.")
+        st.warning(f"⚠️ Your overall time to complete the subjects may be extended by {total_extra_days} day(s).")
 
 # -------------------------------------------------
 # SAVE STATE
