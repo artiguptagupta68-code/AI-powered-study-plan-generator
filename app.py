@@ -127,10 +127,18 @@ available_subjects = list(syllabus_json[selected_exam][selected_stage].keys())
 selected_subjects = st.multiselect("Select Subjects (priority order)", available_subjects)
 
 # -----------------------------
-# USER INPUT: Total days to finish syllabus
+# USER INPUTS
 # -----------------------------
+start_date = st.date_input("Choose your start day of preparation", value=datetime.today())
 total_days = st.number_input("Enter the number of days to complete the syllabus", min_value=1, value=30, step=1)
 capacity = st.number_input("Enter your daily study capacity (hours)", min_value=1.0, value=6.0, step=0.5)
+
+st.subheader("Optional: Assign number of days per subject")
+subject_days = {}
+for subj in selected_subjects:
+    days = st.number_input(f"Days to spend on {subj} (leave 0 for auto)", min_value=0, value=0, step=1)
+    if days > 0:
+        subject_days[subj] = days
 
 # -----------------------------
 # BUILD SUBJECT TIME MAP
@@ -143,9 +151,10 @@ def build_subject_time_map(exam, stage, subjects):
         total_time = 0
         for topic, subs in syllabus_json[exam][stage][subj].items():
             for sub in subs:
-                est_time = 0.3 + 0.05 * len(sub.split())  # time in hours
-                subtopics.append({"topic": topic, "subtopic": sub, "time": est_time})
-                total_time += est_time
+                est_time_h = max(0.3 + 0.05 * len(sub.split()), 0.33)  # min 20 min
+                est_time_min = round(est_time_h * 60)
+                subtopics.append({"topic": topic, "subtopic": sub, "time_h": est_time_h, "time_min": est_time_min})
+                total_time += est_time_h
         subject_times[subj] = total_time
         subject_subtopics[subj] = deque(subtopics)
     return subject_times, subject_subtopics
@@ -157,54 +166,65 @@ if selected_subjects:
     # PROGRESSIVE PRIORITY CALENDAR
     # -----------------------------
     calendar = []
-    current_date = datetime.today()
+    current_date = datetime.combine(start_date, datetime.min.time())
     num_subjects = len(selected_subjects)
 
     for day_index in range(total_days):
         day_plan = []
         day_progress = day_index / total_days
         dynamic_weights = []
-        for i in range(num_subjects):
-            initial_weight = num_subjects - i
-            weight = initial_weight * (1 - day_progress) + 1 * day_progress
-            dynamic_weights.append(weight)
-        total_weight = sum(dynamic_weights)
-        daily_allocation = {
-            subj: capacity * weight / total_weight
-            for subj, weight in zip(selected_subjects, dynamic_weights)
-        }
+        for i, subj in enumerate(selected_subjects):
+            if subj in subject_days:
+                # user-defined days
+                daily_allocation = subject_times[subj] / subject_days[subj]
+                dynamic_weights.append(daily_allocation)
+            else:
+                initial_weight = num_subjects - i
+                weight = initial_weight * (1 - day_progress) + 1 * day_progress
+                dynamic_weights.append(weight)
 
+        total_weight = sum(dynamic_weights)
+        allocation_map = {}
+        for i, subj in enumerate(selected_subjects):
+            if subj in subject_days:
+                allocation_map[subj] = dynamic_weights[i]
+            else:
+                allocation_map[subj] = capacity * dynamic_weights[i] / total_weight
+
+        # Assign subtopics for the day
         for subj in selected_subjects:
-            remaining_time = daily_allocation[subj]
+            remaining_time = allocation_map[subj]
             subtopic_queue = subject_subtopics[subj]
             while subtopic_queue and remaining_time > 0:
                 item = subtopic_queue[0]
-                if item["time"] <= remaining_time:
-                    day_plan.append({"subject": subj, "subtopic": item["subtopic"], "time": item["time"]})
-                    remaining_time -= item["time"]
+                time_to_assign_h = min(item["time_h"], remaining_time)
+                day_plan.append({
+                    "subject": subj,
+                    "subtopic": item["subtopic"],
+                    "time_h": time_to_assign_h,
+                    "time_min": round(time_to_assign_h * 60)
+                })
+                remaining_time -= time_to_assign_h
+                item["time_h"] -= time_to_assign_h
+                if item["time_h"] <= 0.001:
                     subtopic_queue.popleft()
-                else:
-                    day_plan.append({"subject": subj, "subtopic": item["subtopic"], "time": remaining_time})
-                    item["time"] -= remaining_time
-                    remaining_time = 0
+
         calendar.append({"date": current_date, "plan": day_plan})
         current_date += timedelta(days=1)
 
     # -----------------------------
-    # DASHBOARD: INTERACTIVE & BEAUTIFUL
+    # DASHBOARD
     # -----------------------------
     if 'completed_subtopics' not in st.session_state:
         st.session_state.completed_subtopics = set()
 
-    # Subject colors
+    # Colors for subjects
     subject_colors = {}
     default_colors = ["#FF9999","#99CCFF","#99FF99","#FFCC99","#FFCCFF","#CCFF99","#FF9966"]
     for i, subj in enumerate(selected_subjects):
         subject_colors[subj] = default_colors[i % len(default_colors)]
 
     st.header("📅 Study Planner Dashboard")
-
-    # Use tabs for each week
     weeks = total_days // 7 + 1
     tabs = st.tabs([f"Week {i+1}" for i in range(weeks)])
 
@@ -219,13 +239,7 @@ if selected_subjects:
                     for sub_index, s in enumerate(day['plan']):
                         key = f"{day_index}_{s['subject']}_{s['subtopic']}_{sub_index}"
                         checked = key in st.session_state.completed_subtopics
-                        # Colorful checkbox container
-                        st.markdown(
-                            f'<div style="background-color:{subject_colors[s["subject"]]}; padding:5px; border-radius:5px">'
-                            f'<input type="checkbox" id="{key}" {"checked" if checked else ""} /> '
-                            f'<label for="{key}"><b>{s["subject"]}</b> → {s["subtopic"]} ({s["time"]:.1f}h)</label></div>',
-                            unsafe_allow_html=True
-                        )
+                        st.checkbox(f"{s['subject']} → {s['subtopic']} ({s['time_min']} min)", value=checked, key=key)
                         if checked:
                             st.session_state.completed_subtopics.add(key)
                         else:
@@ -233,14 +247,14 @@ if selected_subjects:
                 else:
                     st.info("Rest day / No subtopics assigned")
 
-    # Remaining hours per subject
+    # Remaining time per subject
     st.subheader("⏳ Remaining Study Time per Subject")
     subject_remaining = {subj: 0 for subj in selected_subjects}
     for day_index, day in enumerate(calendar):
         for subj in selected_subjects:
-            day_subj_time = sum(s["time"] for s in day['plan'] if s["subject"] == subj)
+            day_subj_time = sum(s["time_h"] for s in day['plan'] if s["subject"] == subj)
             day_subj_done = sum(
-                s["time"]
+                s["time_h"]
                 for sub_index, s in enumerate(day['plan'])
                 if s["subject"] == subj and
                 f"{day_index}_{s['subject']}_{s['subtopic']}_{sub_index}" in st.session_state.completed_subtopics
@@ -250,4 +264,4 @@ if selected_subjects:
 
     cols = st.columns(len(selected_subjects))
     for col, subj in zip(cols, selected_subjects):
-        col.metric(label=f"📘 {subj}", value=f"{subject_remaining[subj]:.1f}h remaining")
+        col.metric(label=f"📘 {subj}", value=f"{round(subject_remaining[subj]*60)} min remaining")
