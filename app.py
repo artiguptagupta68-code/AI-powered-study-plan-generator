@@ -21,11 +21,11 @@ st.set_page_config("📚 Study Planner", layout="wide")
 if "completed_subtopics" not in st.session_state:
     st.session_state.completed_subtopics = set()
 
-if "remaining_queue" not in st.session_state:
-    st.session_state.remaining_queue = None
+if "remaining_queue" not in st.session_state or st.session_state.remaining_queue is None:
+    st.session_state.remaining_queue = deque()
 
-if "calendar_cache" not in st.session_state:
-    st.session_state.calendar_cache = None
+if "calendar_cache" not in st.session_state or st.session_state.calendar_cache is None:
+    st.session_state.calendar_cache = []
 
 if "recompute_needed" not in st.session_state:
     st.session_state.recompute_needed = True
@@ -37,7 +37,6 @@ if os.path.exists(STATE_FILE):
     try:
         with open(STATE_FILE, "r") as f:
             data = json.load(f)
-
         if isinstance(data, list):
             st.session_state.completed_subtopics = set(data)
         elif isinstance(data, dict):
@@ -124,6 +123,12 @@ start_date = st.date_input("📆 Start Date", datetime.today())
 total_days = st.number_input("🗓️ Total preparation days", min_value=7, value=90)
 daily_hours = st.number_input("⏱️ Daily study hours", min_value=1.0, value=6.0)
 
+# Optional: custom days per subject
+st.markdown("### Optional: Custom days per subject")
+subject_days = {}
+for s in selected_subjects:
+    subject_days[s] = st.number_input(f"{s} days", min_value=0, value=0)
+
 # -------------------------------------------------
 # BUILD QUEUE
 # -------------------------------------------------
@@ -141,15 +146,15 @@ def build_queue():
                 })
     return q
 
-if selected_subjects and st.session_state.remaining_queue is None:
+if selected_subjects and not st.session_state.remaining_queue:
     st.session_state.remaining_queue = build_queue()
     st.session_state.recompute_needed = True
 
 # -------------------------------------------------
-# RECOMPUTE CALENDAR (ONLY WHEN NEEDED)
+# RECOMPUTE CALENDAR (ONLY ON SUBTOPIC COMPLETION)
 # -------------------------------------------------
 if st.session_state.recompute_needed and st.session_state.remaining_queue:
-    queue = deque(st.session_state.remaining_queue)
+    queue = deque(st.session_state.remaining_queue or [])
     calendar = []
     cur_date = datetime.combine(start_date, datetime.min.time())
 
@@ -187,7 +192,7 @@ if st.session_state.recompute_needed and st.session_state.remaining_queue:
 st.header("📆 Study Calendar")
 
 weeks = defaultdict(list)
-for d in st.session_state.calendar_cache:
+for d in st.session_state.calendar_cache or []:
     weeks[d["date"].isocalendar().week].append(d)
 
 tabs = st.tabs([f"Week {i+1}" for i in range(len(weeks))])
@@ -197,7 +202,7 @@ for tab, (_, days) in zip(tabs, weeks.items()):
         for day in days:
             st.subheader(day["date"].strftime("%A, %d %b %Y"))
 
-            for i, s in enumerate(day["plan"]):
+            for i, s in enumerate(day.get("plan", []) or []):
                 key = f"{day['date']}_{s['subject']}_{s['subtopic']}"
                 checked = key in st.session_state.completed_subtopics
 
@@ -209,11 +214,13 @@ for tab, (_, days) in zip(tabs, weeks.items()):
                     if key not in st.session_state.completed_subtopics:
                         st.session_state.completed_subtopics.add(key)
 
+                        # Remove completed subtopic from remaining queue
                         st.session_state.remaining_queue = deque(
                             item for item in st.session_state.remaining_queue
                             if item["subtopic"] != s["subtopic"]
                         )
 
+                        # Trigger recompute
                         st.session_state.recompute_needed = True
 
 # -------------------------------------------------
