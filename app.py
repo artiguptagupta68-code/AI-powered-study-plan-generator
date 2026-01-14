@@ -5,9 +5,8 @@ import zipfile
 import gdown
 import fitz  # PyMuPDF
 import re
-import json
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # ---------------------------------
 # CONFIGURATION
@@ -16,7 +15,7 @@ DRIVE_FILE_ID = "1S6fcsuq9KvICTsOBOdp6_WN9FhzruixM"
 ZIP_PATH = "plan.zip"
 EXTRACT_DIR = "syllabus_data"
 
-st.set_page_config(page_title="Syllabus Viewer", layout="wide")
+st.set_page_config(page_title="Competitive Exam Syllabus Viewer", layout="wide")
 
 # ---------------------------------
 # DOWNLOAD ZIP
@@ -95,7 +94,6 @@ def detect_exam(pdf_path, lines):
     # GATE
     if "GATE" in text or "GRADUATE APTITUDE TEST" in text:
         branch = "General"
-        # detect branch from filename or first few lines
         for l in lines:
             l_clean = l.upper().strip()
             if l_clean in ["ME", "IN", "CE"]:
@@ -170,7 +168,6 @@ if not syllabus_json:
 # DISPLAY SYLLABUS
 # ---------------------------------
 st.header("📘 Syllabus Browser")
-
 for exam, stages in syllabus_json.items():
     st.subheader(f"📝 {exam}")
     for stage, subjects in stages.items():
@@ -185,30 +182,50 @@ for exam, stages in syllabus_json.items():
 # ---------------------------------
 # REAL-WORLD STUDY PLANNER
 # ---------------------------------
-st.header("🗓️ Study Planner")
+st.header("🗓️ Smart Study Planner")
 
+from datetime import timedelta
+
+start_date = st.date_input("Select start date:", datetime.today())
 exam_list = list(syllabus_json.keys())
 selected_exam = st.selectbox("Select Exam", exam_list)
-
 stage_list = list(syllabus_json[selected_exam].keys())
 selected_stage = st.selectbox("Select Stage / Branch", stage_list)
-
 subjects = list(syllabus_json[selected_exam][selected_stage].keys())
 selected_subjects = st.multiselect("Select Subjects", subjects)
-
-capacity = st.number_input("Available Study Hours Today", min_value=1.0, value=6.0, step=0.5)
+capacity = st.number_input("Study hours per day", min_value=1.0, value=6.0, step=0.5)
+time_per_subtopic = st.number_input("Time per subtopic (hours)", min_value=0.1, value=0.5, step=0.1)
 
 if st.button("Generate Study Plan"):
-    hours_used = 0
-    st.subheader("📌 Today's Study Plan")
+    study_plan = []
+    remaining_hours = capacity
+    current_day = start_date
 
     for subject in selected_subjects:
-        for topic, subs in syllabus_json[selected_exam][selected_stage][subject].items():
-            # realistic estimation: base 0.5h + 0.2h per subtopic
-            est = 0.5 + 0.2 * len(subs)
-            if hours_used + est <= capacity:
-                st.write(f"✅ {subject} → {topic} ({est:.1f}h)")
-                hours_used += est
-            else:
-                st.write(f"⏳ {subject} → {topic} (Not enough time today)")
-                break
+        for topic, subtopics in syllabus_json[selected_exam][selected_stage][subject].items():
+            subtopics_queue = subtopics.copy()
+            while subtopics_queue:
+                if remaining_hours <= 0:
+                    current_day += timedelta(days=1)
+                    remaining_hours = capacity
+
+                subtopic = subtopics_queue.pop(0)
+                if time_per_subtopic <= remaining_hours:
+                    study_plan.append({
+                        "date": current_day.strftime("%Y-%m-%d"),
+                        "subject": subject,
+                        "topic": topic,
+                        "subtopic": subtopic,
+                        "hours": time_per_subtopic
+                    })
+                    remaining_hours -= time_per_subtopic
+                else:
+                    current_day += timedelta(days=1)
+                    remaining_hours = capacity
+                    subtopics_queue.insert(0, subtopic)
+
+    st.subheader("📌 Your Study Plan")
+    for day in sorted(set([item["date"] for item in study_plan])):
+        st.markdown(f"### 📅 {day}")
+        for item in [i for i in study_plan if i["date"] == day]:
+            st.write(f"• **{item['subject']} → {item['topic']} → {item['subtopic']}** ({item['hours']}h)")
