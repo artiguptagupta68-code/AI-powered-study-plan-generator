@@ -7,6 +7,7 @@ import fitz
 import re
 from collections import defaultdict, deque
 from datetime import datetime, timedelta
+import pandas as pd
 
 # -----------------------------
 # CONFIGURATION
@@ -119,62 +120,141 @@ if not syllabus_json:
 st.title("📅 Competitive Exam Study Planner Calendar")
 
 selected_exam = st.selectbox("Select Exam", list(syllabus_json.keys()))
-
 available_stages = list(syllabus_json[selected_exam].keys())
 selected_stage = st.selectbox("Select Stage / Branch", available_stages)
-
 available_subjects = list(syllabus_json[selected_exam][selected_stage].keys())
 selected_subjects = st.multiselect("Select Subjects (priority order)", available_subjects)
-
 capacity = st.number_input("Enter your daily study capacity (hours)", min_value=1.0, value=6.0, step=0.5)
 
 # -----------------------------
-# BUILD SUBTOPIC QUEUE
+# BUILD SUBJECT TIME MAP
 # -----------------------------
-def build_subtopic_queue(exam, stage, subjects):
-    queue = deque()
+def build_subject_time_map(exam, stage, subjects):
+    subject_times = {}
+    subject_subtopics = {}
     for subj in subjects:
+        subtopics = []
+        total_time = 0
         for topic, subs in syllabus_json[exam][stage][subj].items():
             for sub in subs:
-                # Time estimation: 0.3h base + 0.2h per word in subtopic
-                est_time = 0.3 + 0.05 * len(sub.split())
-                queue.append({"subject":subj, "subtopic":sub, "time":est_time})
-    return queue
+                est_time = 0.3 + 0.05 * len(sub.split())  # time in hours
+                subtopics.append({"topic": topic, "subtopic": sub, "time": est_time})
+                total_time += est_time
+        subject_times[subj] = total_time
+        subject_subtopics[subj] = deque(subtopics)
+    return subject_times, subject_subtopics
 
-# -----------------------------
-# GENERATE CALENDAR
-# -----------------------------
 if selected_subjects:
-    subtopic_queue = build_subtopic_queue(selected_exam, selected_stage, selected_subjects)
+    subject_times, subject_subtopics = build_subject_time_map(selected_exam, selected_stage, selected_subjects)
+    total_study_time = sum(subject_times.values())
+    total_days = int((total_study_time / capacity) + 0.999)  # ceil to nearest day
+    st.info(f"🗓️ Estimated total days to complete syllabus: {total_days} days")
+
+    # -----------------------------
+    # PROGRESSIVE PRIORITY CALENDAR
+    # -----------------------------
     calendar = []
     current_date = datetime.today()
+    num_subjects = len(selected_subjects)
 
-    while subtopic_queue:
+    for day_index in range(total_days):
         day_plan = []
-        remaining_time = capacity
-        temp_queue = deque()
+        day_progress = day_index / total_days  # 0 → start, 1 → end
+        dynamic_weights = []
+        for i in range(num_subjects):
+            initial_weight = num_subjects - i
+            weight = initial_weight * (1 - day_progress) + 1 * day_progress
+            dynamic_weights.append(weight)
+        total_weight = sum(dynamic_weights)
+        daily_allocation = {
+            subj: capacity * weight / total_weight
+            for subj, weight in zip(selected_subjects, dynamic_weights)
+        }
 
-        while subtopic_queue:
-            item = subtopic_queue.popleft()
-            if item["time"] <= remaining_time:
-                day_plan.append(item)
-                remaining_time -= item["time"]
-            else:
-                temp_queue.appendleft(item)
-                break
-
-        subtopic_queue = temp_queue + subtopic_queue
+        for subj in selected_subjects:
+            remaining_time = daily_allocation[subj]
+            subtopic_queue = subject_subtopics[subj]
+            while subtopic_queue and remaining_time > 0:
+                item = subtopic_queue[0]
+                if item["time"] <= remaining_time:
+                    day_plan.append({"subject": subj, "subtopic": item["subtopic"], "time": item["time"]})
+                    remaining_time -= item["time"]
+                    subtopic_queue.popleft()
+                else:
+                    day_plan.append({"subject": subj, "subtopic": item["subtopic"], "time": remaining_time})
+                    item["time"] -= remaining_time
+                    remaining_time = 0
         calendar.append({"date": current_date, "plan": day_plan})
         current_date += timedelta(days=1)
 
     # -----------------------------
-    # DISPLAY CALENDAR
+    # DASHBOARD: Interactive Checklist + Visual Calendar
     # -----------------------------
-    st.header("📆 Study Calendar")
-    for day in calendar:
-        st.subheader(f"📌 {day['date'].strftime('%A, %d %b %Y')}")
-        if day['plan']:
-            for s in day['plan']:
-                st.checkbox(f"{s['subject']} → {s['subtopic']} ({s['time']:.1f}h)")
-        else:
-            st.info("Rest day / No subtopics assigned")
+    if 'completed_subtopics' not in st.session_state:
+        st.session_state.completed_subtopics = set()  # track completed subtopics
+
+    # Assign colors
+    subject_colors = {}
+    default_colors = ["#FF9999","#99CCFF","#99FF99","#FFCC99","#FFCCFF","#CCFF99","#FF9966"]
+    for i, subj in enumerate(selected_subjects):
+        subject_colors[subj] = default_colors[i % len(default_colors)]
+
+    st.header("📅 Full Study Planner Dashboard")
+    col1, col2 = st.columns([1,1])
+
+    # LEFT: Interactive Checklist
+    with col1:
+        st.subheader("✅ Interactive Checklist")
+        for day in calendar:
+            st.markdown(f"### 📌 {day['date'].strftime('%A, %d %b %Y')}")
+            if day['plan']:
+                for s in day['plan']:
+                    key = f"{day['date'].strftime('%Y-%m-%d')}_{s['subject']}_{s['subtopic']}"
+                    checked = key in st.session_state.completed_subtopics
+                    if st.checkbox(f"{s['subject']} → {s['subtopic']} ({s['time']:.1f}h)", value=checked, key=key):
+                        st.session_state.completed_subtopics.add(key)
+                    else:
+                        st.session_state.completed_subtopics.discard(key)
+            else:
+                st.info("Rest day / No subtopics assigned")
+
+    # RIGHT: Visual Calendar + Progress
+    with col2:
+        st.subheader("🎨 Visual Calendar with Progress")
+        calendar_rows = []
+        subject_remaining = {subj: 0 for subj in selected_subjects}
+
+        for day in calendar:
+            row = {"Date": day['date'].strftime('%A, %d %b %Y')}
+            for subj in selected_subjects:
+                day_subj_time = sum(s["time"] for s in day['plan'] if s["subject"] == subj)
+                day_subj_done = sum(
+                    s["time"]
+                    for s in day['plan']
+                    if s["subject"] == subj and
+                    f"{day['date'].strftime('%Y-%m-%d')}_{s['subject']}_{s['subtopic']}" in st.session_state.completed_subtopics
+                )
+                remaining_time = day_subj_time - day_subj_done
+                if remaining_time > 0:
+                    row[subj] = f"{remaining_time:.1f}h"
+                    subject_remaining[subj] += remaining_time
+                else:
+                    row[subj] = ""
+            calendar_rows.append(row)
+
+        df_calendar = pd.DataFrame(calendar_rows)
+
+        # Color cells
+        def color_cells_progress(val, subj):
+            if val and val != "":
+                return f'background-color: {subject_colors[subj]}; color: black; font-weight: bold'
+            else:
+                return ''
+
+        styled_df = df_calendar.style.apply(lambda x: [color_cells_progress(v, x.name) for v in x], axis=0)
+        st.dataframe(styled_df, height=600)
+
+        # Remaining time per subject
+        st.subheader("⏳ Remaining Study Time per Subject")
+        for subj, remaining in subject_remaining.items():
+            st.markdown(f"**{subj}: {remaining:.1f}h remaining**")
