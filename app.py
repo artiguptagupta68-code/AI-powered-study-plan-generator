@@ -1,35 +1,39 @@
-# app.py
 import streamlit as st
 import json
-import os
-
-# -----------------------------
-# 1️⃣ CONFIGURATION
-# -----------------------------
-GATE_JSON_PATH = "gate_syllabus.json"  # put JSON in same folder
 
 st.set_page_config(page_title="GATE Syllabus Viewer", layout="wide")
 
 st.title("📘 GATE Syllabus Viewer")
 
 # -----------------------------
-# 2️⃣ LOAD JSON
+# 1️⃣ Upload JSON
 # -----------------------------
-if not os.path.exists(GATE_JSON_PATH):
-    st.error("❌ gate_syllabus.json not found")
+uploaded_file = st.file_uploader(
+    "Upload GATE syllabus JSON file",
+    type=["json"]
+)
+
+if not uploaded_file:
+    st.info("⬆️ Please upload gate_syllabus.json")
     st.stop()
 
-with open(GATE_JSON_PATH, "r") as f:
-    gate_syllabus = json.load(f)
+# -----------------------------
+# 2️⃣ Load JSON
+# -----------------------------
+try:
+    gate_syllabus = json.load(uploaded_file)
+except Exception as e:
+    st.error("❌ Invalid JSON file")
+    st.stop()
 
 if not gate_syllabus:
-    st.error("❌ GATE syllabus JSON is empty")
+    st.error("❌ JSON is empty")
     st.stop()
 
 st.success("✅ GATE syllabus loaded successfully")
 
 # -----------------------------
-# 3️⃣ SIDEBAR CONTROLS
+# 3️⃣ Sidebar Controls
 # -----------------------------
 st.sidebar.header("🎯 Selection")
 
@@ -40,7 +44,7 @@ subjects = list(gate_syllabus[selected_branch].keys())
 selected_subject = st.sidebar.selectbox("Select Subject", subjects)
 
 # -----------------------------
-# 4️⃣ DISPLAY SYLLABUS
+# 4️⃣ Display Syllabus
 # -----------------------------
 st.header(f"🧠 Branch: {selected_branch}")
 st.subheader(f"📚 Subject: {selected_subject}")
@@ -48,7 +52,7 @@ st.subheader(f"📚 Subject: {selected_subject}")
 topics = gate_syllabus[selected_branch][selected_subject]
 
 for topic, subtopics in topics.items():
-    with st.expander(f"📌 {topic}", expanded=False):
+    with st.expander(f"📌 {topic}"):
         if subtopics:
             for s in subtopics:
                 st.write(f"- {s}")
@@ -56,7 +60,7 @@ for topic, subtopics in topics.items():
             st.write("No subtopics listed")
 
 # -----------------------------
-# 5️⃣ OPTIONAL JSON DEBUG
+# 5️⃣ Debug View
 # -----------------------------
 with st.expander("🔍 View Raw JSON"):
     st.json(gate_syllabus)
