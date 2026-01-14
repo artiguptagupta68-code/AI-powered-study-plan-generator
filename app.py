@@ -1,140 +1,225 @@
+# app.py
 import streamlit as st
 import os
 import zipfile
 import gdown
-import fitz
+import fitz  # PyMuPDF
+import re
+import json
 from collections import defaultdict
+from datetime import datetime
 
-# --------------------------------
-# CONFIG
-# --------------------------------
+# ---------------------------------
+# CONFIGURATION
+# ---------------------------------
 DRIVE_FILE_ID = "1S6fcsuq9KvICTsOBOdp6_WN9FhzruixM"
-ZIP_FILE = "syllabus.zip"
+ZIP_PATH = "plan.zip"
 EXTRACT_DIR = "syllabus_data"
 
-st.set_page_config("Syllabus Viewer", layout="wide")
-st.title("📚 Exam Syllabus Viewer")
+st.set_page_config(page_title="Syllabus Viewer", layout="wide")
 
-# --------------------------------
+# ---------------------------------
 # DOWNLOAD ZIP
-# --------------------------------
-if not os.path.exists(ZIP_FILE):
+# ---------------------------------
+if not os.path.exists(ZIP_PATH):
     with st.spinner("⬇️ Downloading syllabus ZIP..."):
         gdown.download(
             f"https://drive.google.com/uc?id={DRIVE_FILE_ID}",
-            ZIP_FILE,
+            ZIP_PATH,
             quiet=False
         )
-    st.success("ZIP downloaded")
 
-# --------------------------------
+# ---------------------------------
 # EXTRACT ZIP
-# --------------------------------
-os.makedirs(EXTRACT_DIR, exist_ok=True)
-with zipfile.ZipFile(ZIP_FILE, "r") as z:
-    z.extractall(EXTRACT_DIR)
+# ---------------------------------
+if not os.path.exists(EXTRACT_DIR):
+    os.makedirs(EXTRACT_DIR, exist_ok=True)
+    with zipfile.ZipFile(ZIP_PATH, "r") as zip_ref:
+        zip_ref.extractall(EXTRACT_DIR)
 
-# --------------------------------
-# PDF READER
-# --------------------------------
-def read_pdf_lines(path):
-    doc = fitz.open(path)
+# ---------------------------------
+# REMOVE GARBAGE LINES
+# ---------------------------------
+def is_garbage_line(line: str) -> bool:
+    l = line.lower()
+
+    garbage_keywords = [
+        "annexure",
+        "government of india",
+        "national medical commission",
+        "medical education",
+        "ugmeb",
+        "neet (ug exam)",
+        "date:",
+        "sector",
+        "dwarka",
+        "new delhi",
+        "pocket-",
+        "phase-",
+        "board)",
+        "exam)"
+    ]
+
+    if any(k in l for k in garbage_keywords):
+        return True
+
+    if re.match(r"[a-z]-\d+/\d+", l):
+        return True
+
+    if re.search(r"\d{1,2}(st|nd|rd|th)?\s+[a-z]+\s+\d{4}", l):
+        return True
+
+    if len(line) > 120:
+        return True
+
+    return False
+
+# ---------------------------------
+# READ PDF CLEANLY
+# ---------------------------------
+def read_pdf_lines(pdf_path):
+    doc = fitz.open(pdf_path)
     lines = []
+
     for page in doc:
-        for l in page.get_text().split("\n"):
-            l = l.strip()
-            if l:
-                lines.append(l)
+        text = page.get_text()
+        for line in text.split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            if is_garbage_line(line):
+                continue
+            lines.append(line)
+
     return lines
 
-# --------------------------------
-# PARSE ALL SYLLABUS
-# --------------------------------
-def parse_all_syllabus(root):
-    syllabus = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+# ---------------------------------
+# DETECT EXAM & STAGE
+# ---------------------------------
+def detect_exam(pdf_path, lines):
+    text = " ".join(lines).upper()
+    filename = os.path.basename(pdf_path).upper()
+    folder = os.path.basename(os.path.dirname(pdf_path)).upper()
 
-    for root_dir, _, files in os.walk(root):
+    # NEET
+    if "NEET" in text or "NEET" in filename or "NEET" in folder:
+        return "NEET", "UG"
+
+    # IIT JEE
+    if "JEE" in text or "IIT" in text:
+        if "ADVANCED" in text:
+            return "IIT JEE", "JEE Advanced"
+        return "IIT JEE", "JEE Main"
+
+    # GATE
+    if "GATE" in text or "GRADUATE APTITUDE TEST" in text:
+        branch = "General"
+        for l in lines:
+            if l.isupper() and len(l.split()) <= 5 and "GATE" not in l:
+                branch = l
+                break
+        return "GATE", branch
+
+    return None, None
+
+# ---------------------------------
+# PARSE PDFs → JSON
+# ---------------------------------
+def parse_syllabus(root_dir):
+    syllabus = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: defaultdict(list))))
+
+    for root, _, files in os.walk(root_dir):
         for file in files:
             if not file.lower().endswith(".pdf"):
                 continue
 
-            pdf_path = os.path.join(root_dir, file)
+            pdf_path = os.path.join(root, file)
             lines = read_pdf_lines(pdf_path)
+            exam, stage = detect_exam(pdf_path, lines)
 
-            filename = file.lower()
-            folder = os.path.basename(root_dir).lower()
+            if not exam:
+                continue
 
-            # ---------------- NEET ----------------
-            if "neet" in folder:
-                exam = "NEET"
-                subject = None
+            current_subject = None
+            current_topic = None
 
-                for line in lines:
-                    if line.isupper() and len(line.split()) <= 4:
-                        subject = line.title()
-                        continue
-                    if subject:
-                        syllabus[exam][subject]["Topics"].append(line)
+            for line in lines:
 
-            # ---------------- IIT JEE ----------------
-            elif "jee" in filename:
-                exam = "IIT JEE"
-                subject = None
+                # SUBJECT
+                if line.isupper() and line.replace(" ", "").isalpha() and len(line.split()) <= 5:
+                    current_subject = line.title()
+                    current_topic = None
+                    continue
 
-                for line in lines:
-                    if line.isupper() and len(line.split()) <= 4:
-                        subject = line.title()
-                        continue
-                    if subject:
-                        syllabus[exam][subject]["Topics"].append(line)
+                # TOPIC
+                if (":" in line or line[:2].isdigit() or line.startswith("-")) and len(line.split()) <= 12:
+                    current_topic = line.replace(":", "").strip()
+                    if current_subject:
+                        syllabus[exam][stage][current_subject][current_topic] = []
+                    continue
 
-            # ---------------- GATE ----------------
-            elif filename.startswith("gate"):
-                exam = "GATE"
-                branch = "General"
-
-                for l in lines[:30]:
-                    if l.isupper() and len(l.split()) <= 4 and "GATE" not in l:
-                        branch = l
-                        break
-
-                subject = None
-                for line in lines:
-                    if line.isupper() and len(line.split()) <= 4:
-                        subject = line.title()
-                        continue
-                    if subject:
-                        syllabus[f"{exam} ({branch})"][subject]["Topics"].append(line)
+                # SUBTOPIC
+                if current_subject and current_topic:
+                    parts = [p.strip() for p in line.split(",") if len(p.strip()) > 3]
+                    syllabus[exam][stage][current_subject][current_topic].extend(parts)
 
     return syllabus
 
-# --------------------------------
-# RUN PARSER
-# --------------------------------
-syllabus_json = parse_all_syllabus(EXTRACT_DIR)
+# ---------------------------------
+# BUILD SYLLABUS
+# ---------------------------------
+syllabus_json = parse_syllabus(EXTRACT_DIR)
+
+# ---------------------------------
+# UI
+# ---------------------------------
+st.title("📚 Competitive Exam Syllabus Viewer")
 
 if not syllabus_json:
-    st.error("❌ No syllabus detected")
+    st.error("No syllabus detected.")
     st.stop()
 
-# --------------------------------
-# UI
-# --------------------------------
-st.sidebar.header("🎯 Select")
+# ---------------------------------
+# DISPLAY SYLLABUS
+# ---------------------------------
+st.header("📘 Syllabus Browser")
 
-exam = st.sidebar.selectbox("Exam", list(syllabus_json.keys()))
-subject = st.sidebar.selectbox(
-    "Subject", list(syllabus_json[exam].keys())
-)
+for exam, stages in syllabus_json.items():
+    st.subheader(f"📝 {exam}")
+    for stage, subjects in stages.items():
+        st.markdown(f"**Stage / Branch:** {stage}")
+        for subject, topics in subjects.items():
+            with st.expander(subject):
+                for topic, subs in topics.items():
+                    st.write(f"• **{topic}**")
+                    if subs:
+                        st.caption(", ".join(subs))
 
-st.header(f"📘 {exam}")
-st.subheader(f"📖 {subject}")
+# ---------------------------------
+# STUDY PLANNER
+# ---------------------------------
+st.header("🗓️ Study Planner")
 
-for topic in syllabus_json[exam][subject]["Topics"]:
-    st.write(f"- {topic}")
+exam_list = list(syllabus_json.keys())
+selected_exam = st.selectbox("Select Exam", exam_list)
 
-# --------------------------------
-# DEBUG
-# --------------------------------
-with st.expander("🔍 View Full JSON"):
-    st.json(syllabus_json)
+stage_list = list(syllabus_json[selected_exam].keys())
+selected_stage = st.selectbox("Select Stage / Branch", stage_list)
+
+subjects = list(syllabus_json[selected_exam][selected_stage].keys())
+selected_subjects = st.multiselect("Select Subjects", subjects)
+
+capacity = st.number_input("Study Hours Today", min_value=1.0, value=6.0)
+
+if st.button("Generate Plan"):
+    hours_used = 0
+    st.subheader("📌 Today's Plan")
+
+    for subject in selected_subjects:
+        for topic, subs in syllabus_json[selected_exam][selected_stage][subject].items():
+            est = max(0.5, len(subs) * 0.5)
+            if hours_used + est <= capacity:
+                st.write(f"✅ {subject} → {topic}")
+                hours_used += est
+            else:
+                break
