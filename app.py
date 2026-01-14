@@ -118,6 +118,7 @@ if not syllabus_json:
 # UI: Select Exam & Subjects
 # -----------------------------
 st.title("📅 Competitive Exam Study Planner Calendar")
+st.markdown("Plan your study schedule based on your priorities and time availability!")
 
 selected_exam = st.selectbox("Select Exam", list(syllabus_json.keys()))
 available_stages = list(syllabus_json[selected_exam].keys())
@@ -151,11 +152,9 @@ def build_subject_time_map(exam, stage, subjects):
 
 if selected_subjects:
     subject_times, subject_subtopics = build_subject_time_map(selected_exam, selected_stage, selected_subjects)
-    total_study_time = sum(subject_times.values())
-    st.info(f"🗓️ Total syllabus requires approximately {total_study_time:.1f} hours of study")
 
     # -----------------------------
-    # PROGRESSIVE PRIORITY CALENDAR (user-defined total_days)
+    # PROGRESSIVE PRIORITY CALENDAR
     # -----------------------------
     calendar = []
     current_date = datetime.today()
@@ -192,73 +191,63 @@ if selected_subjects:
         current_date += timedelta(days=1)
 
     # -----------------------------
-    # DASHBOARD: Interactive Checklist + Visual Calendar
+    # DASHBOARD: INTERACTIVE & BEAUTIFUL
     # -----------------------------
     if 'completed_subtopics' not in st.session_state:
         st.session_state.completed_subtopics = set()
 
-    # Assign colors
+    # Subject colors
     subject_colors = {}
     default_colors = ["#FF9999","#99CCFF","#99FF99","#FFCC99","#FFCCFF","#CCFF99","#FF9966"]
     for i, subj in enumerate(selected_subjects):
         subject_colors[subj] = default_colors[i % len(default_colors)]
 
-    st.header("📅 Full Study Planner Dashboard")
-    col1, col2 = st.columns([1,1])
+    st.header("📅 Study Planner Dashboard")
 
-    # LEFT: Interactive Checklist
-    with col1:
-        st.subheader("✅ Interactive Checklist")
-        for day_index, day in enumerate(calendar):
-            st.markdown(f"### 📌 {day['date'].strftime('%A, %d %b %Y')}")
-            if day['plan']:
-                for sub_index, s in enumerate(day['plan']):
-                    # UNIQUE KEY: day_index + subject + subtopic + sub_index
-                    key = f"{day_index}_{s['subject']}_{s['subtopic']}_{sub_index}"
-                    checked = key in st.session_state.completed_subtopics
-                    if st.checkbox(f"{s['subject']} → {s['subtopic']} ({s['time']:.1f}h)", value=checked, key=key):
-                        st.session_state.completed_subtopics.add(key)
-                    else:
-                        st.session_state.completed_subtopics.discard(key)
-            else:
-                st.info("Rest day / No subtopics assigned")
+    # Use tabs for each week
+    weeks = total_days // 7 + 1
+    tabs = st.tabs([f"Week {i+1}" for i in range(weeks)])
 
-    # RIGHT: Visual Calendar + Progress
-    with col2:
-        st.subheader("🎨 Visual Calendar with Progress")
-        calendar_rows = []
-        subject_remaining = {subj: 0 for subj in selected_subjects}
-
-        for day_index, day in enumerate(calendar):
-            row = {"Date": day['date'].strftime('%A, %d %b %Y')}
-            for subj in selected_subjects:
-                day_subj_time = sum(s["time"] for s in day['plan'] if s["subject"] == subj)
-                day_subj_done = sum(
-                    s["time"]
-                    for sub_index, s in enumerate(day['plan'])
-                    if s["subject"] == subj and
-                    f"{day_index}_{s['subject']}_{s['subtopic']}_{sub_index}" in st.session_state.completed_subtopics
-                )
-                remaining_time = day_subj_time - day_subj_done
-                if remaining_time > 0:
-                    row[subj] = f"{remaining_time:.1f}h"
-                    subject_remaining[subj] += remaining_time
+    for week_index, tab in enumerate(tabs):
+        with tab:
+            week_start = week_index * 7
+            week_end = min((week_index + 1) * 7, total_days)
+            for day_index in range(week_start, week_end):
+                day = calendar[day_index]
+                st.markdown(f"### 📌 {day['date'].strftime('%A, %d %b %Y')}")
+                if day['plan']:
+                    for sub_index, s in enumerate(day['plan']):
+                        key = f"{day_index}_{s['subject']}_{s['subtopic']}_{sub_index}"
+                        checked = key in st.session_state.completed_subtopics
+                        # Colorful checkbox container
+                        st.markdown(
+                            f'<div style="background-color:{subject_colors[s["subject"]]}; padding:5px; border-radius:5px">'
+                            f'<input type="checkbox" id="{key}" {"checked" if checked else ""} /> '
+                            f'<label for="{key}"><b>{s["subject"]}</b> → {s["subtopic"]} ({s["time"]:.1f}h)</label></div>',
+                            unsafe_allow_html=True
+                        )
+                        if checked:
+                            st.session_state.completed_subtopics.add(key)
+                        else:
+                            st.session_state.completed_subtopics.discard(key)
                 else:
-                    row[subj] = ""
-            calendar_rows.append(row)
+                    st.info("Rest day / No subtopics assigned")
 
-        df_calendar = pd.DataFrame(calendar_rows)
+    # Remaining hours per subject
+    st.subheader("⏳ Remaining Study Time per Subject")
+    subject_remaining = {subj: 0 for subj in selected_subjects}
+    for day_index, day in enumerate(calendar):
+        for subj in selected_subjects:
+            day_subj_time = sum(s["time"] for s in day['plan'] if s["subject"] == subj)
+            day_subj_done = sum(
+                s["time"]
+                for sub_index, s in enumerate(day['plan'])
+                if s["subject"] == subj and
+                f"{day_index}_{s['subject']}_{s['subtopic']}_{sub_index}" in st.session_state.completed_subtopics
+            )
+            remaining_time = day_subj_time - day_subj_done
+            subject_remaining[subj] += max(remaining_time, 0)
 
-        def color_cells_progress(val, subj):
-            if val and val != "":
-                return f'background-color: {subject_colors[subj]}; color: black; font-weight: bold'
-            else:
-                return ''
-
-        styled_df = df_calendar.style.apply(lambda x: [color_cells_progress(v, x.name) for v in x], axis=0)
-        st.dataframe(styled_df, height=600)
-
-        # Remaining time per subject
-        st.subheader("⏳ Remaining Study Time per Subject")
-        for subj, remaining in subject_remaining.items():
-            st.markdown(f"**{subj}: {remaining:.1f}h remaining**")
+    cols = st.columns(len(selected_subjects))
+    for col, subj in zip(cols, selected_subjects):
+        col.metric(label=f"📘 {subj}", value=f"{subject_remaining[subj]:.1f}h remaining")
