@@ -114,7 +114,9 @@ subject_days = {}
 for s in selected_subjects:
     subject_days[s] = st.number_input(f"{s} days", min_value=0, value=0)
 
-# Color-coded subjects
+# -------------------------------------------------
+# COLORS
+# -------------------------------------------------
 COLORS = ["#4CAF50","#2196F3","#FF9800","#9C27B0","#009688","#E91E63"]
 subject_color = {s: COLORS[i % len(COLORS)] for i, s in enumerate(selected_subjects)}
 
@@ -168,41 +170,66 @@ if selected_subjects:
     st.session_state.calendar_cache = calendar
 
     # -------------------------------------------------
-    # DISPLAY CALENDAR WITH CARDS
+    # WEEKLY VIEW
     # -------------------------------------------------
-    st.header("📆 Study Calendar")
-    for day_idx, day in enumerate(st.session_state.calendar_cache):
-        with st.container():
-            st.markdown(f"<div style='background-color:#f0f4f8;padding:10px;border-radius:10px;'>"
-                        f"<h4 style='color:#333'>{day['date'].strftime('%A, %d %b %Y')}</h4></div>", unsafe_allow_html=True)
+    st.header("📆 Weekly Study Calendar")
 
-            day_keys = []
-            for i, s in enumerate(day.get("plan", [])):
-                key = f"{day['date']}_{i}_{s['subtopic']}"
-                checked = key in st.session_state.completed_subtopics
-                day_keys.append((key, s))
-                sub_color = subject_color.get(s["subject"], "#000000")
-                label = f"<span style='color:{sub_color}; font-weight:bold'>{s['subject']}</span> → {s['subtopic']} ({s['time_min']} min)"
-                if st.checkbox(label, value=checked, key=key, unsafe_allow_html=True):
-                    st.session_state.completed_subtopics.add(key)
-                else:
-                    st.session_state.completed_subtopics.discard(key)
+    # Group days by week
+    weeks = defaultdict(list)
+    for day in st.session_state.calendar_cache:
+        week_num = day["date"].isocalendar().week
+        weeks[week_num].append(day)
 
-            # Day Completed Button
-            if st.button(f"✅ Mark {day['date'].strftime('%d %b %Y')} as Completed", key=f"day_done_{day_idx}"):
-                carry_forward = []
-                for key, s in day_keys:
-                    if key not in st.session_state.completed_subtopics:
-                        carry_forward.append(s)
+    week_numbers = sorted(weeks.keys())
+    tabs = st.tabs([f"Week {i}" for i in week_numbers])
 
-                if day_idx + 1 < len(st.session_state.calendar_cache):
-                    st.session_state.calendar_cache[day_idx + 1]["plan"] = carry_forward + st.session_state.calendar_cache[day_idx + 1]["plan"]
-                else:
-                    new_day = {"date": day["date"] + timedelta(days=1), "plan": carry_forward}
-                    st.session_state.calendar_cache.append(new_day)
+    for tab, week_num in zip(tabs, week_numbers):
+        with tab:
+            for day_idx, day in enumerate(weeks[week_num]):
+                with st.container():
+                    st.markdown(
+                        f"<div style='background-color:#f0f4f8;padding:10px;border-radius:10px;'>"
+                        f"<h4 style='color:#333'>{day['date'].strftime('%A, %d %b %Y')}</h4></div>",
+                        unsafe_allow_html=True
+                    )
 
-                st.success(f"Unticked subtopics carried forward to next day")
-                total_extra_days += len(carry_forward)
+                    day_keys = []
+                    for i, s in enumerate(day.get("plan", [])):
+                        key = f"{day['date']}_{i}_{s['subtopic']}"
+                        checked = key in st.session_state.completed_subtopics
+                        day_keys.append((key, s))
+
+                        col1, col2 = st.columns([1, 8])
+                        with col1:
+                            ticked = st.checkbox("", value=checked, key=key)
+                        with col2:
+                            st.markdown(
+                                f"<span style='color:{subject_color.get(s['subject'], '#000')}; "
+                                f"font-weight:bold'>{s['subject']}</span> → {s['subtopic']} "
+                                f"({s['time_min']} min)",
+                                unsafe_allow_html=True
+                            )
+
+                        if ticked:
+                            st.session_state.completed_subtopics.add(key)
+                        else:
+                            st.session_state.completed_subtopics.discard(key)
+
+                    # Day Completed Button
+                    if st.button(f"✅ Mark {day['date'].strftime('%d %b %Y')} as Completed", key=f"day_done_{day['date']}"):
+                        carry_forward = []
+                        for key, s in day_keys:
+                            if key not in st.session_state.completed_subtopics:
+                                carry_forward.append(s)
+
+                        if day_idx + 1 < len(weeks[week_num]):
+                            weeks[week_num][day_idx + 1]["plan"] = carry_forward + weeks[week_num][day_idx + 1]["plan"]
+                        else:
+                            new_day = {"date": day["date"] + timedelta(days=1), "plan": carry_forward}
+                            st.session_state.calendar_cache.append(new_day)
+
+                        st.success(f"Unticked subtopics carried forward to next day")
+                        total_extra_days += len(carry_forward)
 
     # -------------------------------------------------
     # PROGRESS
