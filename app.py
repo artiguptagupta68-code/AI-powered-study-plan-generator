@@ -3,223 +3,217 @@ import streamlit as st
 import os
 import zipfile
 import gdown
-import fitz  # PyMuPDF
-import re
-import json
+import fitz
 from collections import defaultdict
 from datetime import datetime
+import json
+import re
 
-# ---------------------------------
-# CONFIGURATION
-# ---------------------------------
-DRIVE_FILE_ID = "1S6fcsuq9KvICTsOBOdp6_WN9FhzruixM"
-ZIP_PATH = "plan.zip"
+# -----------------------------
+# 1️⃣ Configuration
+# -----------------------------
+DRIVE_FILE_ID = "1S6fcsuq9KvICTsOBOdp6_WN9FhzruixM"  # syllabus ZIP
+LOCAL_ZIP = "plan.zip"
 EXTRACT_DIR = "syllabus_data"
 
-st.set_page_config(page_title="Syllabus Viewer", layout="wide")
+# -----------------------------
+# 2️⃣ Download ZIP
+# -----------------------------
+if not os.path.exists(LOCAL_ZIP):
+    st.info("⬇️ Downloading syllabus ZIP from Google Drive...")
+    gdown.download(f"https://drive.google.com/uc?id={DRIVE_FILE_ID}", LOCAL_ZIP, quiet=False)
+else:
+    st.info("ℹ️ ZIP already exists.")
 
-# ---------------------------------
-# DOWNLOAD ZIP
-# ---------------------------------
-if not os.path.exists(ZIP_PATH):
-    with st.spinner("⬇️ Downloading syllabus ZIP..."):
-        gdown.download(
-            f"https://drive.google.com/uc?id={DRIVE_FILE_ID}",
-            ZIP_PATH,
-            quiet=False
-        )
+# -----------------------------
+# 3️⃣ Extract ZIP
+# -----------------------------
+os.makedirs(EXTRACT_DIR, exist_ok=True)
+with zipfile.ZipFile(LOCAL_ZIP, 'r') as zip_ref:
+    zip_ref.extractall(EXTRACT_DIR)
+st.success(f"✅ ZIP extracted to {EXTRACT_DIR}")
 
-# ---------------------------------
-# EXTRACT ZIP
-# ---------------------------------
-if not os.path.exists(EXTRACT_DIR):
-    os.makedirs(EXTRACT_DIR, exist_ok=True)
-    with zipfile.ZipFile(ZIP_PATH, "r") as zip_ref:
-        zip_ref.extractall(EXTRACT_DIR)
-
-# ---------------------------------
-# REMOVE GARBAGE LINES
-# ---------------------------------
-def is_garbage_line(line: str) -> bool:
-    l = line.lower()
-
-    garbage_keywords = [
-        "annexure",
-        "government of india",
-        "national medical commission",
-        "medical education",
-        "ugmeb",
-        "neet (ug exam)",
-        "date:",
-        "sector",
-        "dwarka",
-        "new delhi",
-        "pocket-",
-        "phase-",
-        "board)",
-        "exam)"
-    ]
-
-    if any(k in l for k in garbage_keywords):
-        return True
-
-    if re.match(r"[a-z]-\d+/\d+", l):
-        return True
-
-    if re.search(r"\d{1,2}(st|nd|rd|th)?\s+[a-z]+\s+\d{4}", l):
-        return True
-
-    if len(line) > 120:
-        return True
-
-    return False
-
-# ---------------------------------
-# READ PDF CLEANLY
-# ---------------------------------
+# -----------------------------
+# 4️⃣ Read PDF lines
+# -----------------------------
 def read_pdf_lines(pdf_path):
     doc = fitz.open(pdf_path)
     lines = []
-
     for page in doc:
-        text = page.get_text()
+        text = page.get_text("text")
         for line in text.split("\n"):
             line = line.strip()
-            if not line:
-                continue
-            if is_garbage_line(line):
-                continue
-            lines.append(line)
-
+            if line:
+                lines.append(line)
     return lines
 
-# ---------------------------------
-# DETECT EXAM & STAGE
-# ---------------------------------
-def detect_exam(pdf_path, lines):
+# -----------------------------
+# 5️⃣ Clean NEET lines
+# -----------------------------
+def clean_neet_lines(lines):
+    clean_lines = []
+    for line in lines:
+        line_upper = line.upper()
+        # Remove garbage lines
+        if any(word in line_upper for word in ["ANNEXURE", "SECRETARY", "PUBLIC", "GOVERNMENT", "DATE", "NATIONAL MEDICAL COMMISSION"]):
+            continue
+        clean_lines.append(line.strip())
+    return clean_lines
+
+# -----------------------------
+# 6️⃣ Detect Exam and Stage/Branch
+# -----------------------------
+def detect_exam_stage(pdf_path, lines):
     text = " ".join(lines).upper()
     filename = os.path.basename(pdf_path).upper()
     folder = os.path.basename(os.path.dirname(pdf_path)).upper()
 
-    # NEET
-    if "NEET" in text or "NEET" in filename or "NEET" in folder:
-        return "NEET", "UG"
+    # -------- NEET --------
+    if "NEET" in folder or "NEET" in text or "NEET" in filename:
+        lines_clean = clean_neet_lines(lines)
+        return "NEET", "UG", lines_clean
 
-    # IIT JEE
-    if "JEE" in text or "IIT" in text:
-        if "ADVANCED" in text:
-            return "IIT JEE", "JEE Advanced"
-        return "IIT JEE", "JEE Main"
+    # -------- IIT JEE --------
+    if "JEE" in folder or "JEE" in filename or "IIT" in text:
+        stage = "General"
+        if "MAIN" in text:
+            stage = "JEE Main"
+        elif "ADVANCED" in text:
+            stage = "JEE Advanced"
+        return "IIT JEE", stage, lines
 
-    # GATE
-    if "GATE" in text or "GRADUATE APTITUDE TEST" in text:
-        branch = "General"
-        for l in lines:
-            if l.isupper() and len(l.split()) <= 5 and "GATE" not in l:
-                branch = l
-                break
-        return "GATE", branch
+    # -------- GATE --------
+    if "GATE" in folder or "GATE" in filename or "GRADUATE APTITUDE TEST" in text:
+        # Detect branch from filename or content
+        branch = None
+        if "ME" in filename:
+            branch = "ME"
+        elif "IN" in filename:
+            branch = "IN"
+        elif "CE" in filename:
+            branch = "CE"
+        else:
+            # fallback: check first 50 lines for branch
+            for l in lines[:50]:
+                l_clean = l.strip().upper()
+                if l_clean in ["ME", "IN", "CE"]:
+                    branch = l_clean
+                    break
+        if not branch:
+            branch = "General"
+        return "GATE", branch, lines
 
-    return None, None
+    return "UNKNOWN", "General", lines
 
-# ---------------------------------
-# PARSE PDFs → JSON
-# ---------------------------------
-def parse_syllabus(root_dir):
+# -----------------------------
+# 7️⃣ Parse PDFs → JSON
+# -----------------------------
+def pdfs_to_json(pdf_folder):
     syllabus = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: defaultdict(list))))
 
-    for root, _, files in os.walk(root_dir):
+    for root, dirs, files in os.walk(pdf_folder):
         for file in files:
             if not file.lower().endswith(".pdf"):
                 continue
 
             pdf_path = os.path.join(root, file)
             lines = read_pdf_lines(pdf_path)
-            exam, stage = detect_exam(pdf_path, lines)
+            exam, stage, lines = detect_exam_stage(pdf_path, lines)
 
-            if not exam:
+            if exam == "UNKNOWN":
                 continue
 
             current_subject = None
             current_topic = None
 
             for line in lines:
+                clean = line.strip()
 
-                # SUBJECT
-                if line.isupper() and line.replace(" ", "").isalpha() and len(line.split()) <= 5:
-                    current_subject = line.title()
+                # SUBJECT: uppercase, <=5 words
+                if clean.isupper() and clean.replace(" ", "").isalpha() and len(clean.split()) <= 5:
+                    current_subject = clean.title()
                     current_topic = None
                     continue
 
-                # TOPIC
-                if (":" in line or line[:2].isdigit() or line.startswith("-")) and len(line.split()) <= 12:
-                    current_topic = line.replace(":", "").strip()
+                # TOPIC: contains ":" or starts with number or "-"
+                if (":" in clean or clean[:2].isdigit() or clean.startswith("-")) and len(clean.split()) <= 12:
+                    current_topic = clean.replace(":", "").strip()
                     if current_subject:
                         syllabus[exam][stage][current_subject][current_topic] = []
                     continue
 
-                # SUBTOPIC
+                # SUBTOPIC: comma-separated, >3 chars
                 if current_subject and current_topic:
-                    parts = [p.strip() for p in line.split(",") if len(p.strip()) > 3]
+                    parts = [p.strip() for p in clean.split(",") if len(p.strip()) > 3]
                     syllabus[exam][stage][current_subject][current_topic].extend(parts)
 
     return syllabus
 
-# ---------------------------------
-# BUILD SYLLABUS
-# ---------------------------------
-syllabus_json = parse_syllabus(EXTRACT_DIR)
-
-# ---------------------------------
-# UI
-# ---------------------------------
-st.title("📚 Competitive Exam Syllabus Viewer")
+# -----------------------------
+# 8️⃣ Run parsing
+# -----------------------------
+syllabus_json = pdfs_to_json(EXTRACT_DIR)
 
 if not syllabus_json:
-    st.error("No syllabus detected.")
-    st.stop()
+    st.warning("⚠️ No syllabus detected!")
+else:
+    st.success("✅ Syllabus parsed successfully!")
 
-# ---------------------------------
-# DISPLAY SYLLABUS
-# ---------------------------------
-st.header("📘 Syllabus Browser")
-
+# -----------------------------
+# 9️⃣ Display syllabus
+# -----------------------------
+st.header("📚 Syllabus Viewer")
 for exam, stages in syllabus_json.items():
-    st.subheader(f"📝 {exam}")
+    st.subheader(f"Exam: {exam}")
     for stage, subjects in stages.items():
-        st.markdown(f"**Stage / Branch:** {stage}")
+        st.write(f"**Stage/Tier:** {stage}")
         for subject, topics in subjects.items():
-            with st.expander(subject):
-                for topic, subs in topics.items():
-                    st.write(f"• **{topic}**")
-                    if subs:
-                        st.caption(", ".join(subs))
+            st.write(f"  **Subject:** {subject}")
+            for topic, subtopics in topics.items():
+                st.write(f"    - Topic: {topic}")
+                st.write(f"      - Subtopics: {subtopics}")
 
-# ---------------------------------
-# STUDY PLANNER
-# ---------------------------------
-st.header("🗓️ Study Planner")
+# -----------------------------
+# 🔟 Study Planner
+# -----------------------------
+st.header("📝 Study Planner")
 
+# Start date
+start_date = st.date_input("Select start date:", datetime.today())
+
+# Exam & stage select
 exam_list = list(syllabus_json.keys())
-selected_exam = st.selectbox("Select Exam", exam_list)
+selected_exam = st.selectbox("Select exam:", exam_list)
 
-stage_list = list(syllabus_json[selected_exam].keys())
-selected_stage = st.selectbox("Select Stage / Branch", stage_list)
+if selected_exam:
+    stage_list = list(syllabus_json[selected_exam].keys())
+    selected_stage = st.selectbox("Select stage/tier:", stage_list)
 
-subjects = list(syllabus_json[selected_exam][selected_stage].keys())
-selected_subjects = st.multiselect("Select Subjects", subjects)
+    subjects = list(syllabus_json[selected_exam][selected_stage].keys())
+    selected_subjects = st.multiselect("Select subject(s) to start with:", subjects)
 
-capacity = st.number_input("Study Hours Today", min_value=1.0, value=6.0)
+    # Study capacity
+    capacity = st.number_input("Study capacity today (hours):", min_value=1.0, value=6.0, step=0.5)
 
-if st.button("Generate Plan"):
-    hours_used = 0
-    st.subheader("📌 Today's Plan")
-
-    for subject in selected_subjects:
-        for topic, subs in syllabus_json[selected_exam][selected_stage][subject].items():
-            est = max(0.5, len(subs) * 0.5)
-            if hours_used + est <= capacity:
-                st.write(f"✅ {subject} → {topic}")
-                hours_used += est
-            else:
+    # Assign topics
+    if st.button("Assign Topics"):
+        assigned_topics = []
+        used_hours = 0
+        for subject in selected_subjects:
+            for topic, subtopics in syllabus_json[selected_exam][selected_stage][subject].items():
+                est_time = max(len(subtopics) * 0.5, 0.5)
+                if used_hours + est_time <= capacity:
+                    assigned_topics.append((subject, topic, subtopics))
+                    used_hours += est_time
+                else:
+                    break
+            if used_hours >= capacity:
                 break
+
+        if assigned_topics:
+            st.subheader("📌 Topics assigned today:")
+            for subj, topic, subtopics in assigned_topics:
+                st.write(f"- Subject: {subj} | Topic: {topic}")
+                st.write(f"  - Subtopics: {subtopics}")
+        else:
+            st.info("No topics fit within your study capacity today!")
