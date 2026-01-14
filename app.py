@@ -4,9 +4,7 @@ import os, zipfile, gdown, fitz, json, hashlib
 from collections import defaultdict, deque
 from datetime import datetime, timedelta
 
-# -------------------------------------------------
-# CONFIG
-# -------------------------------------------------
+# ----------------- CONFIG -----------------
 DRIVE_FILE_ID = "1S6fcsuq9KvICTsOBOdp6_WN9FhzruixM"
 ZIP_PATH = "plan.zip"
 EXTRACT_DIR = "syllabus_data"
@@ -15,9 +13,7 @@ MIN_SUBTOPIC_TIME_H = 0.33  # 20 minutes
 
 st.set_page_config("📚 Study Planner", layout="wide")
 
-# -------------------------------------------------
-# SESSION STATE INIT
-# -------------------------------------------------
+# ----------------- SESSION STATE -----------------
 if "completed_subtopics" not in st.session_state:
     st.session_state.completed_subtopics = set()
 
@@ -27,26 +23,19 @@ if "remaining_queue" not in st.session_state or st.session_state.remaining_queue
 if "calendar_cache" not in st.session_state or st.session_state.calendar_cache is None:
     st.session_state.calendar_cache = []
 
-if "recompute_needed" not in st.session_state:
-    st.session_state.recompute_needed = True
+if "subject_days_used" not in st.session_state:
+    st.session_state.subject_days_used = defaultdict(int)
 
-# -------------------------------------------------
-# LOAD PROGRESS
-# -------------------------------------------------
+# ----------------- LOAD PROGRESS -----------------
 if os.path.exists(STATE_FILE):
     try:
         with open(STATE_FILE, "r") as f:
             data = json.load(f)
-        if isinstance(data, list):
-            st.session_state.completed_subtopics = set(data)
-        elif isinstance(data, dict):
-            st.session_state.completed_subtopics = set(data.get("subs", []))
+        st.session_state.completed_subtopics = set(data.get("subs", [])) if isinstance(data, dict) else set(data)
     except:
         st.session_state.completed_subtopics = set()
 
-# -------------------------------------------------
-# DOWNLOAD & EXTRACT
-# -------------------------------------------------
+# ----------------- DOWNLOAD & EXTRACT -----------------
 if not os.path.exists(ZIP_PATH):
     gdown.download(f"https://drive.google.com/uc?id={DRIVE_FILE_ID}", ZIP_PATH)
 
@@ -54,9 +43,7 @@ if not os.path.exists(EXTRACT_DIR):
     with zipfile.ZipFile(ZIP_PATH, "r") as z:
         z.extractall(EXTRACT_DIR)
 
-# -------------------------------------------------
-# PDF HELPERS
-# -------------------------------------------------
+# ----------------- PDF HELPERS -----------------
 def is_garbage(line):
     bad = ["government", "commission", "notice", "annexure"]
     return any(b in line.lower() for b in bad) or len(line) > 120
@@ -73,27 +60,20 @@ def read_pdf(path):
 
 def detect_exam(lines):
     t = " ".join(lines).upper()
-    if "NEET" in t:
-        return "NEET", "UG"
-    if "JEE" in t:
-        return "IIT JEE", "JEE Main"
-    if "GATE" in t:
-        return "GATE", "General"
+    if "NEET" in t: return "NEET", "UG"
+    if "JEE" in t: return "IIT JEE", "JEE Main"
+    if "GATE" in t: return "GATE", "General"
     return None, None
 
-# -------------------------------------------------
-# PARSE SYLLABUS
-# -------------------------------------------------
+# ----------------- PARSE SYLLABUS -----------------
 def parse_syllabus(root):
     data = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: defaultdict(list))))
     for r, _, files in os.walk(root):
         for f in files:
-            if not f.endswith(".pdf"):
-                continue
+            if not f.endswith(".pdf"): continue
             lines = read_pdf(os.path.join(r, f))
             exam, stage = detect_exam(lines)
-            if not exam:
-                continue
+            if not exam: continue
 
             subj, topic = None, None
             for l in lines:
@@ -108,14 +88,11 @@ def parse_syllabus(root):
 
 syllabus = parse_syllabus(EXTRACT_DIR)
 
-# -------------------------------------------------
-# UI
-# -------------------------------------------------
+# ----------------- UI -----------------
 st.title("📅 Competitive Exam Study Planner")
 
 exam = st.selectbox("Select Exam", syllabus.keys())
 stage = st.selectbox("Select Stage", syllabus[exam].keys())
-
 subjects = list(syllabus[exam][stage].keys())
 selected_subjects = st.multiselect("Subjects (priority order)", subjects)
 
@@ -129,9 +106,7 @@ subject_days = {}
 for s in selected_subjects:
     subject_days[s] = st.number_input(f"{s} days", min_value=0, value=0)
 
-# -------------------------------------------------
-# BUILD QUEUE
-# -------------------------------------------------
+# ----------------- BUILD QUEUE -----------------
 def build_queue():
     q = deque()
     for s in selected_subjects:
@@ -149,13 +124,10 @@ def build_queue():
 
 if selected_subjects and not st.session_state.remaining_queue:
     st.session_state.remaining_queue = build_queue()
-    st.session_state.recompute_needed = True
 
-# -------------------------------------------------
-# RECOMPUTE CALENDAR (CARRY FORWARD LOGIC)
-# -------------------------------------------------
-def recompute_calendar():
-    queue = deque(st.session_state.remaining_queue or [])
+# ----------------- GENERATE CALENDAR WITH CARRY-FORWARD -----------------
+def generate_calendar():
+    queue = deque(st.session_state.remaining_queue)
     calendar = []
     cur_date = datetime.combine(start_date, datetime.min.time())
 
@@ -163,16 +135,30 @@ def recompute_calendar():
         rem = daily_hours
         plan = []
 
-        for idx, item in enumerate(list(queue)):
-            if rem <= 0:
-                break
+        # 1️⃣ Add carried forward first
+        carry_forward_items = [i for i in queue if i.get("carry_forward", False)]
+        for item in carry_forward_items:
+            if rem <= 0: break
             alloc = min(item["time_h"], rem)
             plan.append({
-                "subject": item["subject"],
-                "subtopic": item["subtopic"],
+                **item,
                 "time_h": alloc,
-                "time_min": round(alloc*60),
-                "carry_forward": item.get("carry_forward", False)
+                "time_min": round(alloc*60)
+            })
+            rem -= alloc
+            item["time_h"] -= alloc
+            if item["time_h"] <= 0:
+                queue.remove(item)
+
+        # 2️⃣ Add new subtopics
+        new_items = [i for i in queue if not i.get("carry_forward", False)]
+        for item in new_items:
+            if rem <= 0: break
+            alloc = min(item["time_h"], rem)
+            plan.append({
+                **item,
+                "time_h": alloc,
+                "time_min": round(alloc*60)
             })
             rem -= alloc
             item["time_h"] -= alloc
@@ -186,76 +172,45 @@ def recompute_calendar():
 
     st.session_state.calendar_cache = calendar
     st.session_state.remaining_queue = queue
-    st.session_state.recompute_needed = False
 
-if st.session_state.recompute_needed:
-    recompute_calendar()
+generate_calendar()
 
-# -------------------------------------------------
-# DISPLAY CALENDAR WITH DAY COMPLETED & CARRIED FORWARD BADGE
-# -------------------------------------------------
+# ----------------- DISPLAY CALENDAR -----------------
 st.header("📆 Study Calendar")
 
-weeks = defaultdict(list)
-for d in st.session_state.calendar_cache or []:
-    weeks[d["date"].isocalendar().week].append(d)
+for day in st.session_state.calendar_cache:
+    st.subheader(day["date"].strftime("%A, %d %b %Y"))
+    day_time_used = 0
 
-tabs = st.tabs([f"Week {i+1}" for i in range(len(weeks))])
+    for i, s in enumerate(day.get("plan", []) or []):
+        raw_key = f"{day['date']}_{s['subject']}_{s['subtopic']}_{i}"
+        key = hashlib.md5(raw_key.encode()).hexdigest()
+        checked = key in st.session_state.completed_subtopics
 
-for tab, (_, days) in zip(tabs, weeks.items()):
-    with tab:
-        for day in days:
-            st.subheader(day["date"].strftime("%A, %d %b %Y"))
+        # Label with Carried Forward badge
+        label = f"{s['subject']} → {s['subtopic']} ({s['time_min']} min)"
+        if s.get("carry_forward", False):
+            label = f"🟡 [Carried Forward] {label}"
 
-            # Day completed checkbox
-            day_key = f"day_completed_{day['date']}"
-            if day_key not in st.session_state:
-                st.session_state[day_key] = False
+        if st.checkbox(label, value=checked, key=key):
+            if key not in st.session_state.completed_subtopics:
+                st.session_state.completed_subtopics.add(key)
+        else:
+            # carry forward uncompleted subtopic
+            st.session_state.remaining_queue.append({
+                "subject": s["subject"],
+                "subtopic": s["subtopic"],
+                "time_h": s["time_h"],
+                "time_min": s["time_min"],
+                "carry_forward": True
+            })
+        day_time_used += s["time_h"]
 
-            st.checkbox("✅ Mark this day as completed", value=st.session_state[day_key], key=day_key)
+    # Warning if daily assignment not completed
+    if day_time_used < daily_hours:
+        extra_days = round((daily_hours - day_time_used)/daily_hours,1)
+        st.warning(f"⚠️ Your target to complete the subject is being increased by {extra_days} day(s).")
 
-            # Show subtopics ONLY if day completed
-            if st.session_state[day_key]:
-                day_time_used = 0
-                with st.container():
-                    for i, s in enumerate(day.get("plan", []) or []):
-                        # HASHED UNIQUE KEY
-                        raw_key = f"{day['date']}_{s['subject']}_{s['subtopic']}_{i}"
-                        key = hashlib.md5(raw_key.encode()).hexdigest()
-                        checked = key in st.session_state.completed_subtopics
-
-                        # Label with Carried Forward badge
-                        label = f"{s['subject']} → {s['subtopic']} ({s['time_min']} min)"
-                        if s.get("carry_forward", False):
-                            label = f"🟡 [Carried Forward] {label}"
-
-                        if st.checkbox(label, value=checked, key=key):
-                            if key not in st.session_state.completed_subtopics:
-                                st.session_state.completed_subtopics.add(key)
-                        else:
-                            # Carry forward uncompleted subtopic
-                            st.session_state.remaining_queue.append({
-                                "subject": s["subject"],
-                                "subtopic": s["subtopic"],
-                                "time_h": s["time_h"],
-                                "time_min": s["time_min"],
-                                "carry_forward": True
-                            })
-
-                        day_time_used += s["time_h"]
-
-                # Warning if daily assignment not completed
-                if day_time_used < daily_hours:
-                    extra_days = round((daily_hours - day_time_used)/daily_hours,1)
-                    st.warning(f"⚠️ Your target to complete the subject is being increased by {extra_days} day(s).")
-                    st.session_state.recompute_needed = True
-
-# -------------------------------------------------
-# SAVE STATE
-# -------------------------------------------------
+# ----------------- SAVE STATE -----------------
 with open(STATE_FILE, "w") as f:
-    json.dump(
-        {"subs": list(st.session_state.completed_subtopics)},
-        f,
-        indent=2
-    )
+    json.dump({"subs": list(st.session_state.completed_subtopics)}, f, indent=2)
