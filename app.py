@@ -20,7 +20,6 @@ st.set_page_config("📚 Study Planner", layout="wide")
 # -------------------------------------------------
 if "completed_subtopics" not in st.session_state:
     st.session_state.completed_subtopics = set()
-
 if "calendar_cache" not in st.session_state:
     st.session_state.calendar_cache = []
 
@@ -99,6 +98,7 @@ syllabus = parse_syllabus(EXTRACT_DIR)
 # UI INPUTS
 # -------------------------------------------------
 st.title("📅 Competitive Exam Study Planner")
+st.markdown("---")
 
 exam = st.selectbox("Select Exam", syllabus.keys())
 stage = st.selectbox("Select Stage", syllabus[exam].keys())
@@ -113,6 +113,10 @@ st.markdown("### Optional: Custom days per subject")
 subject_days = {}
 for s in selected_subjects:
     subject_days[s] = st.number_input(f"{s} days", min_value=0, value=0)
+
+# Color-coded subjects
+COLORS = ["#4CAF50","#2196F3","#FF9800","#9C27B0","#009688","#E91E63"]
+subject_color = {s: COLORS[i % len(COLORS)] for i, s in enumerate(selected_subjects)}
 
 # -------------------------------------------------
 # BUILD QUEUE
@@ -131,6 +135,9 @@ def build_queue():
                 })
     return q
 
+# -------------------------------------------------
+# PLAN GENERATION
+# -------------------------------------------------
 if selected_subjects:
     queue = build_queue()
     calendar = []
@@ -161,38 +168,41 @@ if selected_subjects:
     st.session_state.calendar_cache = calendar
 
     # -------------------------------------------------
-    # DISPLAY CALENDAR WITH DAY COMPLETED BUTTON
+    # DISPLAY CALENDAR WITH CARDS
     # -------------------------------------------------
     st.header("📆 Study Calendar")
     for day_idx, day in enumerate(st.session_state.calendar_cache):
-        st.subheader(day["date"].strftime("%A, %d %b %Y"))
-        day_keys = []
+        with st.container():
+            st.markdown(f"<div style='background-color:#f0f4f8;padding:10px;border-radius:10px;'>"
+                        f"<h4 style='color:#333'>{day['date'].strftime('%A, %d %b %Y')}</h4></div>", unsafe_allow_html=True)
 
-        for i, s in enumerate(day.get("plan", [])):
-            key = f"{day['date']}_{i}_{s['subtopic']}"
-            checked = key in st.session_state.completed_subtopics
-            day_keys.append((key, s))
+            day_keys = []
+            for i, s in enumerate(day.get("plan", [])):
+                key = f"{day['date']}_{i}_{s['subtopic']}"
+                checked = key in st.session_state.completed_subtopics
+                day_keys.append((key, s))
+                sub_color = subject_color.get(s["subject"], "#000000")
+                label = f"<span style='color:{sub_color}; font-weight:bold'>{s['subject']}</span> → {s['subtopic']} ({s['time_min']} min)"
+                if st.checkbox(label, value=checked, key=key, unsafe_allow_html=True):
+                    st.session_state.completed_subtopics.add(key)
+                else:
+                    st.session_state.completed_subtopics.discard(key)
 
-            if st.checkbox(f"{s['subject']} → {s['subtopic']} ({s['time_min']} min)", value=checked, key=key):
-                st.session_state.completed_subtopics.add(key)
-            else:
-                st.session_state.completed_subtopics.discard(key)
+            # Day Completed Button
+            if st.button(f"✅ Mark {day['date'].strftime('%d %b %Y')} as Completed", key=f"day_done_{day_idx}"):
+                carry_forward = []
+                for key, s in day_keys:
+                    if key not in st.session_state.completed_subtopics:
+                        carry_forward.append(s)
 
-        # Day Completed Button
-        if st.button(f"✅ Mark {day['date'].strftime('%d %b %Y')} as Completed", key=f"day_done_{day_idx}"):
-            carry_forward = []
-            for key, s in day_keys:
-                if key not in st.session_state.completed_subtopics:
-                    carry_forward.append(s)
+                if day_idx + 1 < len(st.session_state.calendar_cache):
+                    st.session_state.calendar_cache[day_idx + 1]["plan"] = carry_forward + st.session_state.calendar_cache[day_idx + 1]["plan"]
+                else:
+                    new_day = {"date": day["date"] + timedelta(days=1), "plan": carry_forward}
+                    st.session_state.calendar_cache.append(new_day)
 
-            if day_idx + 1 < len(st.session_state.calendar_cache):
-                st.session_state.calendar_cache[day_idx + 1]["plan"] = carry_forward + st.session_state.calendar_cache[day_idx + 1]["plan"]
-            else:
-                new_day = {"date": day["date"] + timedelta(days=1), "plan": carry_forward}
-                st.session_state.calendar_cache.append(new_day)
-
-            st.success(f"Unticked subtopics carried forward to next day")
-            total_extra_days += len(carry_forward)
+                st.success(f"Unticked subtopics carried forward to next day")
+                total_extra_days += len(carry_forward)
 
     # -------------------------------------------------
     # PROGRESS
@@ -211,7 +221,7 @@ if selected_subjects:
         done = subject_day_used[s]
         remain = max(0, total - done)
 
-        col.markdown(f"### {s}")
+        col.markdown(f"<h3 style='color:{subject_color[s]}'>{s}</h3>", unsafe_allow_html=True)
         col.progress(done / total if total else 0)
         col.caption(f"⏳ {remain} days remaining")
 
