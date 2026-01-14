@@ -42,38 +42,19 @@ if not os.path.exists(EXTRACT_DIR):
 # ---------------------------------
 def is_garbage_line(line: str) -> bool:
     l = line.lower()
-
     garbage_keywords = [
-        "annexure",
-        "government of india",
-        "national medical commission",
-        "medical education",
-        "ugmeb",
-        "neet (ug exam)",
-        "date:",
-        "sector",
-        "dwarka",
-        "new delhi",
-        "pocket-",
-        "phase-",
-        "board)",
-        "exam)",
-        "Secretary",
-        "Public Notice"
+        "annexure", "government of india", "national medical commission",
+        "medical education", "ugmeb", "neet (ug exam)", "date:", "sector",
+        "dwarka", "new delhi", "pocket-", "phase-", "board)", "exam)"
     ]
-
     if any(k in l for k in garbage_keywords):
         return True
-
     if re.match(r"[a-z]-\d+/\d+", l):
         return True
-
     if re.search(r"\d{1,2}(st|nd|rd|th)?\s+[a-z]+\s+\d{4}", l):
         return True
-
     if len(line) > 120:
         return True
-
     return False
 
 # ---------------------------------
@@ -87,16 +68,14 @@ def read_pdf_lines(pdf_path):
         text = page.get_text()
         for line in text.split("\n"):
             line = line.strip()
-            if not line:
-                continue
-            if is_garbage_line(line):
+            if not line or is_garbage_line(line):
                 continue
             lines.append(line)
 
     return lines
 
 # ---------------------------------
-# DETECT EXAM & STAGE
+# DETECT EXAM & STAGE/BRANCH
 # ---------------------------------
 def detect_exam(pdf_path, lines):
     text = " ".join(lines).upper()
@@ -116,9 +95,11 @@ def detect_exam(pdf_path, lines):
     # GATE
     if "GATE" in text or "GRADUATE APTITUDE TEST" in text:
         branch = "General"
+        # detect branch from filename or first few lines
         for l in lines:
-            if l.isupper() and len(l.split()) <= 5 and "GATE" not in l:
-                branch = l
+            l_clean = l.upper().strip()
+            if l_clean in ["ME", "IN", "CE"]:
+                branch = l_clean
                 break
         return "GATE", branch
 
@@ -129,6 +110,7 @@ def detect_exam(pdf_path, lines):
 # ---------------------------------
 def parse_syllabus(root_dir):
     syllabus = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: defaultdict(list))))
+    remove_subjects = ["SECRETARY", "PUBLIC NOTICE"]
 
     for root, _, files in os.walk(root_dir):
         for file in files:
@@ -138,7 +120,6 @@ def parse_syllabus(root_dir):
             pdf_path = os.path.join(root, file)
             lines = read_pdf_lines(pdf_path)
             exam, stage = detect_exam(pdf_path, lines)
-
             if not exam:
                 continue
 
@@ -149,6 +130,10 @@ def parse_syllabus(root_dir):
 
                 # SUBJECT
                 if line.isupper() and line.replace(" ", "").isalpha() and len(line.split()) <= 5:
+                    if line.upper() in remove_subjects:
+                        current_subject = None
+                        current_topic = None
+                        continue
                     current_subject = line.title()
                     current_topic = None
                     continue
@@ -198,7 +183,7 @@ for exam, stages in syllabus_json.items():
                         st.caption(", ".join(subs))
 
 # ---------------------------------
-# STUDY PLANNER
+# REAL-WORLD STUDY PLANNER
 # ---------------------------------
 st.header("🗓️ Study Planner")
 
@@ -211,17 +196,19 @@ selected_stage = st.selectbox("Select Stage / Branch", stage_list)
 subjects = list(syllabus_json[selected_exam][selected_stage].keys())
 selected_subjects = st.multiselect("Select Subjects", subjects)
 
-capacity = st.number_input("Study Hours Today", min_value=1.0, value=6.0)
+capacity = st.number_input("Available Study Hours Today", min_value=1.0, value=6.0, step=0.5)
 
-if st.button("Generate Plan"):
+if st.button("Generate Study Plan"):
     hours_used = 0
-    st.subheader("📌 Today's Plan")
+    st.subheader("📌 Today's Study Plan")
 
     for subject in selected_subjects:
         for topic, subs in syllabus_json[selected_exam][selected_stage][subject].items():
-            est = max(0.5, len(subs) * 0.5)
+            # realistic estimation: base 0.5h + 0.2h per subtopic
+            est = 0.5 + 0.2 * len(subs)
             if hours_used + est <= capacity:
-                st.write(f"✅ {subject} → {topic}")
+                st.write(f"✅ {subject} → {topic} ({est:.1f}h)")
                 hours_used += est
             else:
+                st.write(f"⏳ {subject} → {topic} (Not enough time today)")
                 break
