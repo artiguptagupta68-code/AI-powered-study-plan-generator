@@ -1,199 +1,108 @@
-# app.py
-import streamlit as st
 import os
 import zipfile
+import fitz
 import gdown
-import fitz  # PyMuPDF
 from collections import defaultdict
-from datetime import datetime
-import json
 
 # -----------------------------
-# 1️⃣ Configuration
+# CONFIG
 # -----------------------------
-DRIVE_FILE_ID = "1S6fcsuq9KvICTsOBOdp6_WN9FhzruixM"  # syllabus ZIP
-LOCAL_ZIP = "plan.zip"
+DRIVE_FILE_ID = "1S6fcsuq9KvICTsOBOdp6_WN9FhzruixM"
+ZIP_PATH = "plan.zip"
 EXTRACT_DIR = "syllabus_data"
 
 # -----------------------------
-# 2️⃣ Download ZIP
+# DOWNLOAD ZIP
 # -----------------------------
-if not os.path.exists(LOCAL_ZIP):
-    st.info("⬇️ Downloading syllabus ZIP from Google Drive...")
-    gdown.download(f"https://drive.google.com/uc?id={DRIVE_FILE_ID}", LOCAL_ZIP, quiet=False)
-else:
-    st.info("ℹ️ ZIP already exists.")
+if not os.path.exists(ZIP_PATH):
+    gdown.download(f"https://drive.google.com/uc?id={DRIVE_FILE_ID}", ZIP_PATH, quiet=False)
 
 # -----------------------------
-# 3️⃣ Extract ZIP
+# EXTRACT ZIP
 # -----------------------------
 os.makedirs(EXTRACT_DIR, exist_ok=True)
-with zipfile.ZipFile(LOCAL_ZIP, 'r') as zip_ref:
-    zip_ref.extractall(EXTRACT_DIR)
-st.success(f"✅ ZIP extracted to {EXTRACT_DIR}")
+with zipfile.ZipFile(ZIP_PATH, "r") as z:
+    z.extractall(EXTRACT_DIR)
 
 # -----------------------------
-# 4️⃣ Function to read PDF lines
+# READ PDF
 # -----------------------------
-def read_pdf_lines(pdf_path):
-    doc = fitz.open(pdf_path)
+def read_pdf_lines(path):
+    doc = fitz.open(path)
     lines = []
     for page in doc:
-        text = page.get_text("text")
-        for line in text.split("\n"):
-            line = line.strip()
-            if line:
-                lines.append(line)
+        lines += [l.strip() for l in page.get_text().split("\n") if l.strip()]
     return lines
 
 # -----------------------------
-# 5️⃣ Detect exam and stage/tier
+# DETECT EXAM + STAGE
 # -----------------------------
-def detect_exam_stage(pdf_path, lines):
+def detect_exam(pdf_path, lines):
     text = " ".join(lines).upper()
-    filename = os.path.basename(pdf_path).upper()
-    folder = os.path.basename(os.path.dirname(pdf_path)).upper()
+    fname = os.path.basename(pdf_path).upper()
 
-    # -------- NEET --------
-    if "NEET" in folder or "NEET" in text or "NEET" in filename:
+    # NEET
+    if "NEET" in text or "NEET" in fname:
         return "NEET", "UG"
 
-    # -------- IIT JEE --------
-    if "JEE" in folder or "JEE" in filename or "IIT" in text or "JOINT ENTRANCE EXAMINATION" in text:
-        stage = "General"
-        if "MAIN" in text:
-            stage = "JEE Main"
-        elif "ADVANCED" in text:
-            stage = "JEE Advanced"
-        return "IIT JEE", stage
+    # IIT JEE
+    if "JEE" in text or "IIT" in text:
+        if "ADVANCED" in text:
+            return "IIT JEE", "JEE Advanced"
+        return "IIT JEE", "JEE Main"
 
-    # -------- GATE --------
-    # -------- GATE --------
-    if "GATE" in filename.upper() or "GATE" in folder.upper() or "GRADUATE APTITUDE TEST" in text:
-        # Detect branch from PDF content
-        branch = None
+    # GATE
+    if "GATE" in text or fname.startswith("GATE"):
+        branch = "General"
         for l in lines:
-            l_clean = l.strip()
-            if l_clean.isupper() and len(l_clean.split()) <= 5 and "GATE" not in l_clean and not l_clean.isdigit():
-                branch = l_clean
+            if l.isupper() and len(l.split()) <= 5 and "GATE" not in l:
+                branch = l
                 break
-    # fallback to filename (e.g., "gate 1.pdf")
-    if not branch:
-        name = os.path.splitext(filename)[0]  # "gate 1"
-        branch = name.replace("GATE", "").replace("_", " ").strip().title()
-        if not branch:
-            branch = "General"
-            return "GATE", branch
+        return "GATE", branch
 
-
-    return "UNKNOWN", "General"
+    return None, None
 
 # -----------------------------
-# 6️⃣ Parse PDFs → JSON
+# PARSE ALL PDFs
 # -----------------------------
-def pdfs_to_json(pdf_folder):
+def parse_syllabus(root):
     syllabus = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: defaultdict(list))))
 
-    for root, dirs, files in os.walk(pdf_folder):
+    for root_dir, _, files in os.walk(root):
         for file in files:
             if not file.lower().endswith(".pdf"):
                 continue
 
-            pdf_path = os.path.join(root, file)
-            lines = read_pdf_lines(pdf_path)
-            exam, stage = detect_exam_stage(pdf_path, lines)
+            path = os.path.join(root_dir, file)
+            lines = read_pdf_lines(path)
+            exam, stage = detect_exam(path, lines)
 
-            # skip unknown exams
-            if exam == "UNKNOWN":
+            if not exam:
                 continue
 
-            current_subject = None
-            current_topic = None
+            subject = topic = None
 
             for line in lines:
-                clean = line.strip()
-
-                # SUBJECT: uppercase, <=5 words
-                if clean.isupper() and clean.replace(" ", "").isalpha() and len(clean.split()) <= 5:
-                    current_subject = clean.title()
-                    current_topic = None
+                # SUBJECT
+                if line.isupper() and line.replace(" ", "").isalpha() and len(line.split()) <= 5:
+                    subject = line.title()
                     continue
 
-                # TOPIC: contains ":" or starts with number or "-"
-                if (":" in clean or clean[:2].isdigit() or clean.startswith("-")) and len(clean.split()) <= 12:
-                    current_topic = clean.replace(":", "").strip()
-                    if current_subject:
-                        syllabus[exam][stage][current_subject][current_topic] = []
+                # TOPIC
+                if (":" in line or line[:2].isdigit()) and subject:
+                    topic = line.replace(":", "").strip()
+                    syllabus[exam][stage][subject][topic] = []
                     continue
 
-                # SUBTOPIC: comma-separated, >3 chars
-                if current_subject and current_topic:
-                    parts = [p.strip() for p in clean.split(",") if len(p.strip()) > 3]
-                    syllabus[exam][stage][current_subject][current_topic].extend(parts)
+                # SUBTOPIC
+                if subject and topic:
+                    syllabus[exam][stage][subject][topic].append(line)
 
     return syllabus
 
 # -----------------------------
-# 7️⃣ Run parsing
+# RUN
 # -----------------------------
-syllabus_json = pdfs_to_json(EXTRACT_DIR)
+syllabus_json = parse_syllabus(EXTRACT_DIR)
 
-if not syllabus_json:
-    st.warning("⚠️ No syllabus detected!")
-else:
-    st.success("✅ Syllabus parsed successfully!")
-
-# -----------------------------
-# 8️⃣ Display syllabus
-# -----------------------------
-st.header("📚 Syllabus Viewer")
-for exam, stages in syllabus_json.items():
-    st.subheader(f"Exam: {exam}")
-    for stage, subjects in stages.items():
-        st.write(f"**Stage/Tier:** {stage}")
-        for subject, topics in subjects.items():
-            st.write(f"  **Subject:** {subject}")
-            for topic, subtopics in topics.items():
-                st.write(f"    - Topic: {topic}")
-                st.write(f"      - Subtopics: {subtopics}")
-
-# -----------------------------
-# 9️⃣ Study Planner
-# -----------------------------
-st.header("📝 Study Planner")
-
-start_date = st.date_input("Select start date:", datetime.today())
-
-exam_list = list(syllabus_json.keys())
-selected_exam = st.selectbox("Select exam:", exam_list)
-
-if selected_exam:
-    stage_list = list(syllabus_json[selected_exam].keys())
-    selected_stage = st.selectbox("Select stage/tier:", stage_list)
-
-    subjects = list(syllabus_json[selected_exam][selected_stage].keys())
-    selected_subjects = st.multiselect("Select subject(s) to start with:", subjects)
-
-    capacity = st.number_input("Study capacity today (hours):", min_value=1.0, value=6.0, step=0.5)
-
-    if st.button("Assign Topics"):
-        assigned_topics = []
-        used_hours = 0
-        for subject in selected_subjects:
-            for topic, subtopics in syllabus_json[selected_exam][selected_stage][subject].items():
-                est_time = max(len(subtopics) * 0.5, 0.5)
-                if used_hours + est_time <= capacity:
-                    assigned_topics.append((subject, topic, subtopics))
-                    used_hours += est_time
-                else:
-                    break
-            if used_hours >= capacity:
-                break
-
-        if assigned_topics:
-            st.subheader("📌 Topics assigned today:")
-            for subj, topic, subtopics in assigned_topics:
-                st.write(f"- Subject: {subj} | Topic: {topic}")
-                st.write(f"  - Subtopics: {subtopics}")
-        else:
-            st.info("No topics fit within your study capacity today!")
+print("✅ Exams detected:", list(syllabus_json.keys()))
