@@ -142,7 +142,8 @@ def build_queue():
                     "subject": s,
                     "subtopic": sub,
                     "time_h": est,
-                    "time_min": round(est*60)
+                    "time_min": round(est*60),
+                    "carry_forward": False
                 })
     return q
 
@@ -169,11 +170,13 @@ def recompute_calendar():
                 "subject": item["subject"],
                 "subtopic": item["subtopic"],
                 "time_h": alloc,
-                "time_min": round(alloc*60)
+                "time_min": round(alloc*60),
+                "carry_forward": item.get("carry_forward", False)
             })
             rem -= alloc
             item["time_h"] -= alloc
             if item["time_h"] > 0:
+                item["carry_forward"] = True
                 queue.appendleft(item)  # carry forward
 
         calendar.append({"date": cur_date, "plan": plan})
@@ -187,7 +190,7 @@ if st.session_state.recompute_needed:
     recompute_calendar()
 
 # -------------------------------------------------
-# DISPLAY CALENDAR WITH DAY COMPLETED
+# DISPLAY CALENDAR WITH DAY COMPLETED & CARRIED FORWARD BADGE
 # -------------------------------------------------
 st.header("📆 Study Calendar")
 
@@ -214,23 +217,25 @@ for tab, (_, days) in zip(tabs, weeks.items()):
                 day_time_used = 0
                 with st.container():
                     for i, s in enumerate(day.get("plan", []) or []):
-                        key = f"{day['date']}_{s['subject']}_{s['subtopic']}"
+                        key = f"{day['date']}_{i}_{s['subject']}_{s['subtopic']}"
                         checked = key in st.session_state.completed_subtopics
 
-                        if st.checkbox(
-                            f"{s['subject']} → {s['subtopic']} ({s['time_min']} min)",
-                            value=checked,
-                            key=key
-                        ):
+                        # Label with Carried Forward badge
+                        label = f"{s['subject']} → {s['subtopic']} ({s['time_min']} min)"
+                        if s.get("carry_forward", False):
+                            label = f"🟡 [Carried Forward] {label}"
+
+                        if st.checkbox(label, value=checked, key=key):
                             if key not in st.session_state.completed_subtopics:
                                 st.session_state.completed_subtopics.add(key)
                         else:
-                            # Carry forward uncompleted
+                            # Carry forward uncompleted subtopic
                             st.session_state.remaining_queue.append({
                                 "subject": s["subject"],
                                 "subtopic": s["subtopic"],
                                 "time_h": s["time_h"],
-                                "time_min": s["time_min"]
+                                "time_min": s["time_min"],
+                                "carry_forward": True
                             })
 
                         day_time_used += s["time_h"]
