@@ -4,22 +4,22 @@ import os, zipfile, gdown, fitz, json, re
 from collections import defaultdict, deque
 from datetime import datetime, timedelta
 
-# =================================================
+# -------------------------------
 # CONFIG
-# =================================================
+# -------------------------------
 DRIVE_FILE_ID = "1S6fcsuq9KvICTsOBOdp6_WN9FhzruixM"
 ZIP_PATH = "plan.zip"
 EXTRACT_DIR = "syllabus_data"
 STATE_FILE = "progress.json"
 
 MAX_CONTINUOUS_DAYS = 6
-FREE_DAY_BUFFER_MIN = 300  # minutes
+FREE_DAY_BUFFER_MIN = 300  # 5 hours
 
 st.set_page_config("📚 AI Study Planner", layout="wide")
 
-# =================================================
+# -------------------------------
 # SESSION STATE
-# =================================================
+# -------------------------------
 if "completed" not in st.session_state:
     st.session_state.completed = set()
 if "calendar" not in st.session_state:
@@ -31,9 +31,9 @@ if os.path.exists(STATE_FILE):
     with open(STATE_FILE, "r") as f:
         st.session_state.completed = set(json.load(f))
 
-# =================================================
+# -------------------------------
 # DOWNLOAD & EXTRACT
-# =================================================
+# -------------------------------
 if not os.path.exists(ZIP_PATH):
     gdown.download(f"https://drive.google.com/uc?id={DRIVE_FILE_ID}", ZIP_PATH, quiet=True)
 
@@ -41,9 +41,9 @@ if not os.path.exists(EXTRACT_DIR):
     with zipfile.ZipFile(ZIP_PATH) as z:
         z.extractall(EXTRACT_DIR)
 
-# =================================================
+# -------------------------------
 # PDF PARSING
-# =================================================
+# -------------------------------
 def clean_line(line):
     bad = ["annexure", "notice", "commission"]
     return line.strip() and not any(b in line.lower() for b in bad) and len(line) < 120
@@ -74,7 +74,6 @@ def parse_syllabus(root):
             exam = detect_exam(lines)
             if not exam:
                 continue
-
             subject = None
             for l in lines:
                 if l.isupper() and l.replace(" ", "").isalpha():
@@ -84,17 +83,14 @@ def parse_syllabus(root):
                     data[exam][subject].extend(parts)
     return data
 
-# =================================================
-# LOAD SYLLABUS
-# =================================================
 syllabus = parse_syllabus(EXTRACT_DIR)
 if not syllabus:
     st.error("❌ No syllabus data found.")
     st.stop()
 
-# =================================================
-# AI TIME ESTIMATION
-# =================================================
+# -------------------------------
+# TIME ESTIMATION
+# -------------------------------
 def estimate_time_min(topic, exam):
     words = len(topic.split())
     complexity = len(re.findall(r"(theorem|numerical|derivation|proof)", topic.lower()))
@@ -102,10 +98,10 @@ def estimate_time_min(topic, exam):
     weight = {"NEET":1.1, "IIT JEE":1.3, "GATE":1.5}.get(exam,1)
     return int(base * weight)
 
-# =================================================
+# -------------------------------
 # UI INPUTS
-# =================================================
-st.title("📅 AI-Powered Study Planner")
+# -------------------------------
+st.title("📅 AI Study Planner (Week View)")
 
 exam = st.selectbox("Select Exam", list(syllabus.keys()))
 subjects = list(syllabus[exam].keys())
@@ -115,9 +111,9 @@ start_date = st.date_input("Start Date", datetime.today())
 daily_hours = st.number_input("Daily study hours", 1.0, 12.0, 6.0)
 questions_per_day = st.number_input("Questions per topic per day", 10, 200, 30)
 
-# =================================================
+# -------------------------------
 # BUILD QUEUE
-# =================================================
+# -------------------------------
 def build_queue():
     q = deque()
     for s in selected_subjects:
@@ -129,9 +125,9 @@ def build_queue():
             })
     return q
 
-# =================================================
-# PLAN GENERATION
-# =================================================
+# -------------------------------
+# GENERATE CALENDAR WEEK-BY-WEEK
+# -------------------------------
 if selected_subjects:
     queue = build_queue()
     calendar = []
@@ -153,6 +149,7 @@ if selected_subjects:
                 queue.appendleft(item)
                 daily_min = 0
 
+        # Add free day if streak limit reached
         if streak >= MAX_CONTINUOUS_DAYS:
             calendar.append({
                 "date": cur_date,
@@ -172,51 +169,48 @@ if selected_subjects:
 
     st.session_state.calendar = calendar
 
-# =================================================
+# -------------------------------
 # TABS
-# =================================================
+# -------------------------------
 tab1, tab2, tab3 = st.tabs([
     "📖 Study Plan",
     "📝 Question Practice",
     "✅ Day Completed"
 ])
 
-# =================================================
-# STUDY PLAN TAB (VISUAL)
-# =================================================
+# -------------------------------
+# STUDY PLAN TAB (WEEKLY)
+# -------------------------------
 with tab1:
-    st.header("📆 Study Calendar")
+    st.header("📆 Weekly Study Plan")
 
+    # group days by week
+    weeks = defaultdict(list)
     for day in st.session_state.calendar:
-        st.markdown(
-            f"""
-            <div style="background:#f8fafc;padding:15px;
-            border-radius:12px;margin-bottom:15px;
-            border-left:6px solid #4f46e5;">
-            <h4>{day['date'].strftime('%A, %d %b %Y')}</h4>
-            """,
-            unsafe_allow_html=True
-        )
+        week_num = day["date"].isocalendar()[1]
+        weeks[week_num].append(day)
 
-        for i, p in enumerate(day["plan"]):
-            key = f"{day['date']}_{i}_{p['topic']}"
-            checked = key in st.session_state.completed
-            label = f"{p['subject']} → {p['topic']} ({p['time_min']} min / {round(p['time_min']/60,2)} h)"
-            if st.checkbox(label, checked, key=key):
-                st.session_state.completed.add(key)
-            else:
-                st.session_state.completed.discard(key)
+    for w_num, days in weeks.items():
+        st.subheader(f"Week {w_num}")
+        for day in days:
+            st.markdown(f"**{day['date'].strftime('%A, %d %b %Y')}**")
+            for i, p in enumerate(day["plan"]):
+                key = f"{day['date']}_{i}_{p['topic']}"
+                checked = key in st.session_state.completed
+                label = f"{p['subject']} → {p['topic']} ({p['time_min']} min / {round(p['time_min']/60,2)} h)"
+                if st.checkbox(label, checked, key=key):
+                    st.session_state.completed.add(key)
+                else:
+                    st.session_state.completed.discard(key)
 
-        st.markdown("</div>", unsafe_allow_html=True)
-
-# =================================================
+# -------------------------------
 # PRACTICE TAB
-# =================================================
+# -------------------------------
 with tab2:
-    st.header("📝 Question Practice")
-    days = [d["date"].strftime("%A, %d %b %Y") for d in st.session_state.calendar]
-    sel = st.selectbox("Select Day", days)
-    idx = days.index(sel)
+    st.header("📝 Daily Question Practice")
+    day_labels = [d["date"].strftime("%A, %d %b %Y") for d in st.session_state.calendar]
+    sel = st.selectbox("Select Day", day_labels)
+    idx = day_labels.index(sel)
     day = st.session_state.calendar[idx]
 
     for i, p in enumerate(day["plan"]):
@@ -230,15 +224,14 @@ with tab2:
             key=key
         )
 
-# =================================================
+# -------------------------------
 # DAY COMPLETED TAB
-# =================================================
+# -------------------------------
 with tab3:
     st.header("✅ Mark Day Completed")
-
-    days = [d["date"].strftime("%A, %d %b %Y") for d in st.session_state.calendar]
-    sel = st.selectbox("Select Day", days)
-    idx = days.index(sel)
+    day_labels = [d["date"].strftime("%A, %d %b %Y") for d in st.session_state.calendar]
+    sel = st.selectbox("Select Day", day_labels)
+    idx = day_labels.index(sel)
     day = st.session_state.calendar[idx]
 
     unfinished = []
@@ -253,23 +246,22 @@ with tab3:
         if not unfinished:
             st.success("🎉 All subtopics completed!")
         else:
-            if idx + 1 == len(st.session_state.calendar):
+            # Ensure next day exists
+            if idx + 1 >= len(st.session_state.calendar):
                 st.session_state.calendar.append({
                     "date": day["date"] + timedelta(days=1),
                     "plan": [],
                     "questions": day["questions"]
                 })
-
-            st.session_state.calendar[idx + 1]["plan"] = unfinished + \
-                st.session_state.calendar[idx + 1]["plan"]
-
-            st.warning("Unfinished subtopics moved to next day")
+            # Move unfinished subtopics to next day
+            st.session_state.calendar[idx + 1]["plan"] = unfinished + st.session_state.calendar[idx + 1]["plan"]
+            st.warning(f"{len(unfinished)} unfinished subtopics moved to next day")
             for u in unfinished:
                 st.write(f"• {u['subject']} → {u['topic']}")
 
-# =================================================
+# -------------------------------
 # ADAPTIVE WARNING
-# =================================================
+# -------------------------------
 unfinished_min = 0
 for d in st.session_state.calendar:
     for i, p in enumerate(d["plan"]):
@@ -279,12 +271,11 @@ for d in st.session_state.calendar:
 
 if unfinished_min > FREE_DAY_BUFFER_MIN:
     st.warning(
-        f"⚠️ {unfinished_min} min ({round(unfinished_min/60,2)} h) pending. "
-        "Consider adding a free/revision day."
+        f"⚠️ {unfinished_min} min ({round(unfinished_min/60,2)} h) pending. Consider adding a free/revision day."
     )
 
-# =================================================
+# -------------------------------
 # SAVE STATE
-# =================================================
+# -------------------------------
 with open(STATE_FILE, "w") as f:
     json.dump(list(st.session_state.completed), f)
