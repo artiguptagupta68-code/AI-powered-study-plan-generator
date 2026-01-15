@@ -106,7 +106,6 @@ selected_subjects = st.multiselect("Select Subjects", subjects, key="subject_sel
 start_date = st.date_input("Start Date", datetime.today(), key="start_date")
 daily_hours = st.number_input("Daily study hours",1.0,12.0,6.0,key="daily_hours")
 questions_per_topic = st.number_input("Questions per topic per day",10,200,30,key="questions_per_topic")
-subjects_per_day = st.selectbox("Number of subjects per day",[1,2,len(selected_subjects)], index=0,key="subjects_per_day")
 revision_every_n_days = st.number_input("Revision Day Frequency (every N days)",5,30,7,key="revision_freq")
 test_every_n_days = st.number_input("Test Day Frequency (every N days)",7,30,14,key="test_freq")
 
@@ -123,18 +122,19 @@ def build_queue():
 # -------------------------------
 # ROUND-ROBIN DAILY ASSIGNMENT
 # -------------------------------
-def assign_daily_plan(queue, daily_min, subjects_per_day):
+def assign_daily_plan(queue, daily_min):
     plan = []
 
-    subjects_today = list({item["subject"] for item in queue})[:subjects_per_day]
+    # All subjects with pending subtopics
+    subjects_today = list({item["subject"] for item in queue})
     if not subjects_today:
         return plan
 
-    # build per-subject queues
+    # Per-subject queues
     subject_queues = {s: deque([item for item in queue if item["subject"]==s]) for s in subjects_today}
 
-    # round-robin allocation
-    while daily_min>0 and any(subject_queues.values()):
+    # Round-robin allocation
+    while daily_min > 0 and any(subject_queues.values()):
         for s in subjects_today:
             if not subject_queues[s]:
                 continue
@@ -151,7 +151,7 @@ def assign_daily_plan(queue, daily_min, subjects_per_day):
                         del queue[q_idx]
                         break
             # else, item remains in queue with reduced time
-            if daily_min<=0:
+            if daily_min <= 0:
                 break
     return plan
 
@@ -165,7 +165,7 @@ def generate_calendar(queue,start_date,daily_hours):
     cur_date=datetime.combine(start_date,datetime.min.time())
     while queue:
         daily_min=int(daily_hours*60)
-        plan=assign_daily_plan(queue,daily_min,subjects_per_day)
+        plan=assign_daily_plan(queue,daily_min)
 
         day_type="STUDY"
         if streak>=MAX_CONTINUOUS_DAYS:
