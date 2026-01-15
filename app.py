@@ -65,23 +65,28 @@ def detect_exam(lines):
     return None, None
 
 def parse_syllabus(root):
-    data = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
-    for r,_,files in os.walk(root):
+    data = defaultdict(lambda: defaultdict(list))
+
+    for r, _, files in os.walk(root):
         for f in files:
-            if not f.endswith(".pdf"): continue
-            lines = read_pdf(os.path.join(r,f))
+            if not f.endswith(".pdf"):
+                continue
+
+            lines = read_pdf(os.path.join(r, f))
             exam, stage = detect_exam(lines)
-            if not exam: continue
+            if not exam:
+                continue
+
             subject = None
             for l in lines:
-                if l.isupper():
+                if l.isupper() and l.replace(" ", "").isalpha():
                     subject = l.title()
                 elif subject:
-                    parts = [p.strip() for p in l.split(",") if len(p)>3]
+                    parts = [p.strip() for p in l.split(",") if len(p.strip()) > 3]
                     data[exam][subject].extend(parts)
+
     return data
 
-syllabus = parse_syllabus(EXTRACT_DIR)
 
 # -------------------------------------------------
 # AI TIME ESTIMATION
