@@ -13,7 +13,8 @@ EXTRACT_DIR = "syllabus_data"
 STATE_FILE = "progress.json"
 MIN_SUBTOPIC_TIME_H = 0.33
 DEFAULT_FREE_DAY_EVERY = 5
-MAX_SCHEDULE_DAYS = 365  # prevent OverflowError
+MAX_SCHEDULE_DAYS = 365 * 5  # 5 years max scheduling
+MAX_DATE = datetime(9999,12,31)
 
 st.set_page_config("📚 Study Planner", layout="wide")
 
@@ -138,9 +139,9 @@ with tab1:
         days_generated = 0
 
         # ----------------------------
-        # DYNAMIC CALENDAR LOOP WITH LIMIT
+        # DYNAMIC CALENDAR LOOP WITH OVERFLOW CHECK
         # ----------------------------
-        while (queue or carry_forward) and days_generated < MAX_SCHEDULE_DAYS:
+        while (queue or carry_forward) and days_generated < MAX_SCHEDULE_DAYS and cur_date < MAX_DATE:
             rem_h = daily_hours
             plan = []
 
@@ -178,8 +179,8 @@ with tab1:
             study_day_count += 1
             days_generated += 1
 
-        if days_generated >= MAX_SCHEDULE_DAYS:
-            st.warning("⚠️ Maximum schedule limit reached. Some topics may remain unscheduled.")
+        if queue or carry_forward:
+            st.warning(f"⚠️ {len(queue)+len(carry_forward)} topics remain unscheduled. Increase daily hours or total days.")
 
         st.session_state.calendar_cache = calendar
 
