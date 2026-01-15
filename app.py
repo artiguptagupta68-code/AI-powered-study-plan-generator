@@ -11,8 +11,7 @@ DRIVE_FILE_ID = "1S6fcsuq9KvICTsOBOdp6_WN9FhzruixM"
 ZIP_PATH = "plan.zip"
 EXTRACT_DIR = "syllabus_data"
 STATE_FILE = "progress.json"
-
-MAX_CONTINUOUS_DAYS = 6  # after which a free day is suggested
+MAX_CONTINUOUS_DAYS = 6
 
 st.set_page_config("📚 AI Study Planner", layout="wide")
 
@@ -122,29 +121,26 @@ def build_queue():
     return q
 
 # -------------------------------
-# ROUND-ROBIN DAILY ASSIGNMENT
+# ROUND-ROBIN DAILY ASSIGNMENT (WORKING FOR MULTI-SUBJECT)
 # -------------------------------
 def assign_daily_plan(queue, daily_min, subjects_per_day):
     plan = []
     subjects_today = list({item["subject"] for item in queue})[:subjects_per_day]
-    subject_queues = {s: deque([item for item in queue if item["subject"]==s]) for s in subjects_today}
-
-    while daily_min > 0 and any(subject_queues.values()):
-        for s in subjects_today:
-            if not subject_queues[s]: continue
-            item = subject_queues[s].popleft()
-            alloc = min(item["time_min"], daily_min)
-            plan.append({**item,"time_min":alloc})
-            daily_min -= alloc
-            item["time_min"] -= alloc
-
-            if item["time_min"] > 0:
-                queue.remove(item)
-                queue.appendleft(item)
-            else:
-                queue.remove(item)
-
-            if daily_min <= 0: break
+    idx = 0
+    while daily_min > 0 and queue:
+        if idx >= len(queue): idx = 0
+        item = queue[idx]
+        if item["subject"] not in subjects_today:
+            idx += 1
+            continue
+        alloc = min(item["time_min"], daily_min)
+        plan.append({"subject": item["subject"], "topic": item["topic"], "time_min": alloc})
+        daily_min -= alloc
+        item["time_min"] -= alloc
+        if item["time_min"] <= 0:
+            queue.pop(idx)
+        else:
+            idx += 1
     return plan
 
 # -------------------------------
@@ -236,10 +232,7 @@ with tab2:
     day_labels=[d["date"].strftime("%A, %d %b %Y") for d in st.session_state.calendar]
     if day_labels:
         sel=st.selectbox("Select Day", day_labels, key="practice_day_select")
-        try:
-            idx=day_labels.index(sel)
-        except ValueError:
-            idx=0
+        idx=day_labels.index(sel)
         day=st.session_state.calendar[idx]
 
         num_questions=st.number_input("Number of questions to practice",1,200,30,key=f"num_questions_{idx}")
