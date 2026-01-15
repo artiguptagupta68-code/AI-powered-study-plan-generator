@@ -13,8 +13,8 @@ EXTRACT_DIR = "syllabus_data"
 STATE_FILE = "progress.json"
 MIN_SUBTOPIC_TIME_H = 0.33
 DEFAULT_FREE_DAY_EVERY = 5
-MAX_SCHEDULE_DAYS = 365 * 5  # 5 years max
-MAX_DATE = datetime(9999, 12, 31)
+MAX_SCHEDULE_DAYS = 365 * 5
+MAX_DATE = datetime(9999,12,31)
 
 st.set_page_config("📚 Study Planner", layout="wide")
 
@@ -43,7 +43,7 @@ if not os.path.exists(EXTRACT_DIR):
 # PDF CLEANING
 # ----------------------------
 def is_garbage(line):
-    bad = ["government", "commission", "notice", "annexure"]
+    bad = ["government","commission","notice","annexure"]
     return any(b in line.lower() for b in bad) or len(line) > 120
 
 def read_pdf(path):
@@ -137,7 +137,7 @@ with tab1:
         else:
             calendar = []
             cur_date = datetime.combine(start_date, datetime.min.time())
-            study_day_count = 0  # only increments for real study days
+            study_day_count = 0
             carry_forward = deque()
             days_generated = 0
 
@@ -148,7 +148,6 @@ with tab1:
                 rem_h = daily_hours
                 plan = []
 
-                # Free day logic: only after at least one study day
                 is_free_day = free_day_every > 0 and study_day_count > 0 and study_day_count % free_day_every == 0
                 if is_free_day:
                     plan.append({"subject":"FREE DAY","subtopic":"Rest / light reading","time_min":0})
@@ -157,7 +156,7 @@ with tab1:
                     days_generated += 1
                     continue
 
-                # Carry-forward topics first
+                # Carry-forward topics
                 temp_carry = deque()
                 while carry_forward and rem_h > 0:
                     item = carry_forward.popleft()
@@ -179,10 +178,9 @@ with tab1:
                     if item["time_h"] > 0:
                         carry_forward.append(item)
 
-                # Append the study day
+                # Append study day
                 calendar.append({"date":cur_date,"day_type":"Study","plan":plan,"questions":questions_per_topic})
 
-                # Increment counters
                 cur_date += timedelta(days=1)
                 study_day_count += 1
                 days_generated += 1
@@ -193,31 +191,24 @@ with tab1:
             st.session_state.calendar_cache = calendar
 
             # ----------------------------
-            # WEEKLY VIEW
+            # DISPLAY CALENDAR
             # ----------------------------
             st.header("📆 Study Calendar")
-            weeks = defaultdict(list)
             for day in calendar:
-                weeks[day["date"].isocalendar().week].append(day)
-
-            for w in sorted(weeks.keys()):
-                st.subheader(f"Week {w}")
-                for day_idx, day in enumerate(weeks[w]):
-                    st.markdown(f"### {day['date'].strftime('%A, %d %b %Y')} ({day['day_type']}) | Questions: {day['questions']}")
-                    day_keys = []
-                    for i, s in enumerate(day["plan"]):
-                        key = f"{day['date']}_{i}_{s['subtopic']}"
-                        checked = key in st.session_state.completed_subtopics
-                        day_keys.append((key,s))
-                        col1,col2 = st.columns([1,8])
-                        with col1:
-                            ticked = st.checkbox("",value=checked,key=key)
-                        with col2:
-                            st.markdown(f"<b style='color:{subject_color.get(s['subject'],'#000')}'>{s['subject']}</b> → {s['subtopic']} ({s['time_min']} min)",unsafe_allow_html=True)
-                        if ticked:
-                            st.session_state.completed_subtopics.add(key)
-                        else:
-                            st.session_state.completed_subtopics.discard(key)
+                st.subheader(day["date"].strftime("%A, %d %b %Y") + f" ({day['day_type']}) | Questions: {day['questions']}")
+                for i, s in enumerate(day["plan"]):
+                    key = f"{day['date']}_{i}_{s['subtopic']}"
+                    checked = key in st.session_state.completed_subtopics
+                    hrs = round(s['time_min']/60,2)
+                    ticked = st.checkbox(
+                        f"{s['subject']} → {s['subtopic']} ({s['time_min']} min ({hrs} h))",
+                        value=checked,
+                        key=key
+                    )
+                    if ticked:
+                        st.session_state.completed_subtopics.add(key)
+                    else:
+                        st.session_state.completed_subtopics.discard(key)
 
 # ----------------------------
 # QUESTION PRACTICE TAB
@@ -225,14 +216,20 @@ with tab1:
 with tab2:
     st.header("📝 Question Practice")
     if not st.session_state.calendar_cache:
-        st.info("No study schedule found. Complete study tab first.")
+        st.info("No study schedule found. Complete the Study Planner first.")
     else:
+        day_options = [d["date"].strftime("%A, %d %b %Y") for d in st.session_state.calendar_cache]
+        selected_day_str = st.selectbox("Select Day for Practice", day_options)
+        selected_day_idx = day_options.index(selected_day_str)
+        today = st.session_state.calendar_cache[selected_day_idx]
+
         subjects_q = st.multiselect("Select subjects for practice", subjects)
-        st.subheader("Today's Topics for Practice")
-        today = st.session_state.calendar_cache[0]
+
+        st.subheader(f"Topics scheduled on {selected_day_str}:")
         for t in today["plan"]:
-            if t["subject"] in subjects_q and t["subject"]!="FREE DAY":
-                st.markdown(f"- {t['subject']} → {t['subtopic']} : {t['time_min']} min, {today['questions']} questions")
+            if t["subject"] in subjects_q and t["subject"] != "FREE DAY":
+                hrs = round(t['time_min']/60,2)
+                st.markdown(f"- {t['subject']} → {t['subtopic']} ({t['time_min']} min ({hrs} h), {today['questions']} questions)")
 
 # ----------------------------
 # SAVE STATE
