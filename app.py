@@ -125,24 +125,31 @@ def build_queue():
 # ROUND-ROBIN DAILY ASSIGNMENT
 # -------------------------------
 def assign_daily_plan(queue, daily_min, subjects_per_day):
-    plan=[]
-    subjects_today=list({item["subject"] for item in queue})[:subjects_per_day]
-    subject_queues={s: deque([item for item in queue if item["subject"]==s]) for s in subjects_today}
+    plan = []
 
-    while daily_min>0 and any(subject_queues.values()):
+    # pick up to N unique subjects with pending topics
+    subjects_today = list({item["subject"] for item in queue})[:subjects_per_day]
+    subject_queues = {s: deque([item for item in queue if item["subject"]==s]) for s in subjects_today}
+
+    # round-robin assignment
+    while daily_min > 0 and any(subject_queues.values()):
         for s in subjects_today:
             if not subject_queues[s]:
                 continue
-            item=subject_queues[s].popleft()
-            if item["time_min"] <= daily_min:
-                plan.append(item)
-                daily_min-=item["time_min"]
+            item = subject_queues[s].popleft()
+            alloc = min(item["time_min"], daily_min)
+            plan.append({**item, "time_min": alloc})
+            daily_min -= alloc
+            item["time_min"] -= alloc
+
+            if item["time_min"] > 0:
+                # put unfinished back to the front of queue
                 queue.remove(item)
+                queue.appendleft(item)
             else:
-                plan.append({**item,"time_min":daily_min})
-                item["time_min"]-=daily_min
-                daily_min=0
-                subject_queues[s].appendleft(item)
+                queue.remove(item)
+
+            if daily_min <= 0:
                 break
     return plan
 
