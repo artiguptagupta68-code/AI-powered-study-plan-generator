@@ -125,22 +125,34 @@ def build_queue():
 # -------------------------------
 def assign_daily_plan(queue, daily_min, subjects_per_day):
     plan = []
+
     subjects_today = list({item["subject"] for item in queue})[:subjects_per_day]
-    idx = 0
-    while daily_min > 0 and queue:
-        if idx >= len(queue): idx = 0
-        item = queue[idx]
-        if item["subject"] not in subjects_today:
-            idx += 1
-            continue
-        alloc = min(item["time_min"], daily_min)
-        plan.append({"subject": item["subject"], "topic": item["topic"], "time_min": alloc})
-        daily_min -= alloc
-        item["time_min"] -= alloc
-        if item["time_min"] <= 0:
-            del queue[idx]   # ✅ fixed pop error
-        else:
-            idx += 1
+    if not subjects_today:
+        return plan
+
+    # build per-subject queues
+    subject_queues = {s: deque([item for item in queue if item["subject"]==s]) for s in subjects_today}
+
+    # round-robin allocation
+    while daily_min>0 and any(subject_queues.values()):
+        for s in subjects_today:
+            if not subject_queues[s]:
+                continue
+            item = subject_queues[s].popleft()
+            alloc = min(item["time_min"], daily_min)
+            plan.append({"subject": item["subject"], "topic": item["topic"], "time_min": alloc})
+            daily_min -= alloc
+            item["time_min"] -= alloc
+
+            # Remove from main queue if fully done
+            if item["time_min"] <= 0:
+                for q_idx,q_item in enumerate(queue):
+                    if q_item["subject"]==item["subject"] and q_item["topic"]==item["topic"]:
+                        del queue[q_idx]
+                        break
+            # else, item remains in queue with reduced time
+            if daily_min<=0:
+                break
     return plan
 
 # -------------------------------
