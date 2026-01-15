@@ -132,20 +132,26 @@ def generate_calendar(queue,start_date,daily_hours):
     while queue:
         daily_min=int(daily_hours*60)
         plan=[]
-        # subjects today
+        # pick subjects for today
         subjects_today=list({item["subject"] for item in queue})[:subjects_per_day]
-        temp_queue=deque([item for item in queue if item["subject"] in subjects_today])
-        for _ in range(len(temp_queue)):
-            if daily_min<=0: break
-            item=temp_queue.popleft()
-            if item["time_min"]<=daily_min:
-                plan.append(item)
-                daily_min-=item["time_min"]
-                queue.remove(item)
-            else:
-                plan.append({**item,"time_min":daily_min})
-                item["time_min"]-=daily_min
-                daily_min=0
+        temp_queue=[item for item in queue if item["subject"] in subjects_today]
+        # round-robin distribution among subjects
+        while daily_min>0 and temp_queue:
+            assigned=False
+            for item in temp_queue.copy():
+                if item["time_min"] <= daily_min:
+                    plan.append(item)
+                    daily_min -= item["time_min"]
+                    queue.remove(item)
+                    temp_queue.remove(item)
+                    assigned=True
+                else:
+                    plan.append({**item,"time_min":daily_min})
+                    item["time_min"] -= daily_min
+                    daily_min=0
+                    assigned=True
+                    break
+            if not assigned: break
 
         day_type="STUDY"
         if streak>=MAX_CONTINUOUS_DAYS:
