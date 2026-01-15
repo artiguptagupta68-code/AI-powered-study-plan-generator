@@ -122,6 +122,31 @@ def build_queue():
     return q
 
 # -------------------------------
+# ROUND-ROBIN DAILY ASSIGNMENT
+# -------------------------------
+def assign_daily_plan(queue, daily_min, subjects_per_day):
+    plan=[]
+    subjects_today=list({item["subject"] for item in queue})[:subjects_per_day]
+    subject_queues={s: deque([item for item in queue if item["subject"]==s]) for s in subjects_today}
+
+    while daily_min>0 and any(subject_queues.values()):
+        for s in subjects_today:
+            if not subject_queues[s]:
+                continue
+            item=subject_queues[s].popleft()
+            if item["time_min"] <= daily_min:
+                plan.append(item)
+                daily_min-=item["time_min"]
+                queue.remove(item)
+            else:
+                plan.append({**item,"time_min":daily_min})
+                item["time_min"]-=daily_min
+                daily_min=0
+                subject_queues[s].appendleft(item)
+                break
+    return plan
+
+# -------------------------------
 # GENERATE CALENDAR
 # -------------------------------
 def generate_calendar(queue,start_date,daily_hours):
@@ -131,27 +156,7 @@ def generate_calendar(queue,start_date,daily_hours):
     cur_date=datetime.combine(start_date,datetime.min.time())
     while queue:
         daily_min=int(daily_hours*60)
-        plan=[]
-        # pick subjects for today
-        subjects_today=list({item["subject"] for item in queue})[:subjects_per_day]
-        temp_queue=[item for item in queue if item["subject"] in subjects_today]
-        # round-robin distribution among subjects
-        while daily_min>0 and temp_queue:
-            assigned=False
-            for item in temp_queue.copy():
-                if item["time_min"] <= daily_min:
-                    plan.append(item)
-                    daily_min -= item["time_min"]
-                    queue.remove(item)
-                    temp_queue.remove(item)
-                    assigned=True
-                else:
-                    plan.append({**item,"time_min":daily_min})
-                    item["time_min"] -= daily_min
-                    daily_min=0
-                    assigned=True
-                    break
-            if not assigned: break
+        plan=assign_daily_plan(queue,daily_min,subjects_per_day)
 
         day_type="STUDY"
         if streak>=MAX_CONTINUOUS_DAYS:
@@ -216,7 +221,6 @@ with tab1:
                     st.success("🎉 All subtopics completed for this day!")
                 else:
                     st.warning(f"{len(unfinished_today)} subtopics unfinished. Moving to next day.")
-                    # ensure next day exists
                     next_idx=day_idx+1
                     if next_idx>=len(weeks[w_num]):
                         next_date=day["date"]+timedelta(days=1)
