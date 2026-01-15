@@ -12,7 +12,7 @@ ZIP_PATH = "plan.zip"
 EXTRACT_DIR = "syllabus_data"
 STATE_FILE = "progress.json"
 
-MAX_CONTINUOUS_DAYS = 6
+MAX_CONTINUOUS_DAYS = 6  # after which a free day is suggested
 
 st.set_page_config("📚 AI Study Planner", layout="wide")
 
@@ -27,7 +27,7 @@ if "practice_done" not in st.session_state:
     st.session_state.practice_done = {}
 
 if os.path.exists(STATE_FILE):
-    with open(STATE_FILE,"r") as f:
+    with open(STATE_FILE, "r") as f:
         st.session_state.completed = set(json.load(f))
 
 # -------------------------------
@@ -126,31 +126,25 @@ def build_queue():
 # -------------------------------
 def assign_daily_plan(queue, daily_min, subjects_per_day):
     plan = []
-
-    # pick up to N unique subjects with pending topics
     subjects_today = list({item["subject"] for item in queue})[:subjects_per_day]
     subject_queues = {s: deque([item for item in queue if item["subject"]==s]) for s in subjects_today}
 
-    # round-robin assignment
     while daily_min > 0 and any(subject_queues.values()):
         for s in subjects_today:
-            if not subject_queues[s]:
-                continue
+            if not subject_queues[s]: continue
             item = subject_queues[s].popleft()
             alloc = min(item["time_min"], daily_min)
-            plan.append({**item, "time_min": alloc})
+            plan.append({**item,"time_min":alloc})
             daily_min -= alloc
             item["time_min"] -= alloc
 
             if item["time_min"] > 0:
-                # put unfinished back to the front of queue
                 queue.remove(item)
                 queue.appendleft(item)
             else:
                 queue.remove(item)
 
-            if daily_min <= 0:
-                break
+            if daily_min <= 0: break
     return plan
 
 # -------------------------------
