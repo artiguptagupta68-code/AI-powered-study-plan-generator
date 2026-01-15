@@ -1,7 +1,7 @@
 # app.py
 import streamlit as st
 import os, zipfile, gdown, fitz, json, re
-from collections import defaultdict, deque
+from collections import deque, defaultdict
 from datetime import datetime, timedelta
 
 # -------------------------------
@@ -12,7 +12,7 @@ ZIP_PATH = "plan.zip"
 EXTRACT_DIR = "syllabus_data"
 STATE_FILE = "progress.json"
 
-MAX_CONTINUOUS_DAYS = 6
+MAX_CONTINUOUS_DAYS = 6  # days before free day
 FREE_DAY_BUFFER_MIN = 300  # 5 hours
 
 st.set_page_config("📚 AI Study Planner", layout="wide")
@@ -101,7 +101,7 @@ def estimate_time_min(topic, exam):
 # -------------------------------
 # UI INPUTS
 # -------------------------------
-st.title("📅 AI Study Planner (Week View)")
+st.title("📅 AI Study Planner (Dynamic Week View)")
 
 exam = st.selectbox("Select Exam", list(syllabus.keys()))
 subjects = list(syllabus[exam].keys())
@@ -109,7 +109,7 @@ selected_subjects = st.multiselect("Select Subjects", subjects)
 
 start_date = st.date_input("Start Date", datetime.today())
 daily_hours = st.number_input("Daily study hours", 1.0, 12.0, 6.0)
-questions_per_day = st.number_input("Questions per topic per day", 10, 200, 30)
+questions_per_topic = st.number_input("Questions per topic per day", 10, 200, 30)
 
 # -------------------------------
 # BUILD QUEUE
@@ -126,13 +126,12 @@ def build_queue():
     return q
 
 # -------------------------------
-# GENERATE CALENDAR WEEK-BY-WEEK
+# DYNAMIC CALENDAR GENERATION
 # -------------------------------
-if selected_subjects:
-    queue = build_queue()
+def generate_calendar(queue, start_date, daily_hours):
     calendar = []
-    cur_date = datetime.combine(start_date, datetime.min.time())
     streak = 0
+    cur_date = datetime.combine(start_date, datetime.min.time())
 
     while queue:
         daily_min = int(daily_hours * 60)
@@ -149,7 +148,6 @@ if selected_subjects:
                 queue.appendleft(item)
                 daily_min = 0
 
-        # Add free day if streak limit reached
         if streak >= MAX_CONTINUOUS_DAYS:
             calendar.append({
                 "date": cur_date,
@@ -161,30 +159,29 @@ if selected_subjects:
             calendar.append({
                 "date": cur_date,
                 "plan": plan,
-                "questions": questions_per_day
+                "questions": questions_per_topic
             })
             streak += 1
 
         cur_date += timedelta(days=1)
 
-    st.session_state.calendar = calendar
+    return calendar
+
+# Generate initial calendar if empty
+if selected_subjects and not st.session_state.calendar:
+    queue = build_queue()
+    st.session_state.calendar = generate_calendar(queue, start_date, daily_hours)
 
 # -------------------------------
 # TABS
 # -------------------------------
-tab1, tab2, tab3 = st.tabs([
-    "📖 Study Plan",
-    "📝 Question Practice",
-    "✅ Day Completed"
-])
+tab1, tab2, tab3 = st.tabs(["📖 Study Plan", "📝 Question Practice", "✅ Day Completed"])
 
 # -------------------------------
 # STUDY PLAN TAB (WEEKLY)
 # -------------------------------
 with tab1:
     st.header("📆 Weekly Study Plan")
-
-    # group days by week
     weeks = defaultdict(list)
     for day in st.session_state.calendar:
         week_num = day["date"].isocalendar()[1]
@@ -220,12 +217,12 @@ with tab2:
         st.session_state.practice_done[key] = st.number_input(
             f"{p['subject']} → {p['topic']} ({day['questions']} questions)",
             0, day["questions"],
-            st.session_state.practice_done.get(key, 0),
+            st.session_state.practice_done.get(key,0),
             key=key
         )
 
 # -------------------------------
-# DAY COMPLETED TAB
+# DAY COMPLETED TAB (Dynamic Reassign)
 # -------------------------------
 with tab3:
     st.header("✅ Mark Day Completed")
@@ -246,21 +243,28 @@ with tab3:
         if not unfinished:
             st.success("🎉 All subtopics completed!")
         else:
-            # Ensure next day exists
+            # Prepend unfinished topics to next day
             if idx + 1 >= len(st.session_state.calendar):
                 st.session_state.calendar.append({
                     "date": day["date"] + timedelta(days=1),
                     "plan": [],
                     "questions": day["questions"]
                 })
-            # Move unfinished subtopics to next day
-            st.session_state.calendar[idx + 1]["plan"] = unfinished + st.session_state.calendar[idx + 1]["plan"]
+            st.session_state.calendar[idx+1]["plan"] = unfinished + st.session_state.calendar[idx+1]["plan"]
             st.warning(f"{len(unfinished)} unfinished subtopics moved to next day")
             for u in unfinished:
                 st.write(f"• {u['subject']} → {u['topic']}")
 
+        # Regenerate subsequent calendar dynamically
+        queue = deque()
+        for d in st.session_state.calendar[idx+1:]:
+            for t in d["plan"]:
+                if t["subject"] != "FREE":
+                    queue.append(t)
+        st.session_state.calendar[idx+1:] = generate_calendar(queue, st.session_state.calendar[idx+1]["date"], daily_hours)
+
 # -------------------------------
-# ADAPTIVE WARNING
+# Adaptive warning
 # -------------------------------
 unfinished_min = 0
 for d in st.session_state.calendar:
@@ -270,12 +274,10 @@ for d in st.session_state.calendar:
             unfinished_min += p["time_min"]
 
 if unfinished_min > FREE_DAY_BUFFER_MIN:
-    st.warning(
-        f"⚠️ {unfinished_min} min ({round(unfinished_min/60,2)} h) pending. Consider adding a free/revision day."
-    )
+    st.warning(f"⚠️ {unfinished_min} min ({round(unfinished_min/60,2)} h) pending. Add a free/revision day.")
 
 # -------------------------------
 # SAVE STATE
 # -------------------------------
-with open(STATE_FILE, "w") as f:
+with open(STATE_FILE,"w") as f:
     json.dump(list(st.session_state.completed), f)
