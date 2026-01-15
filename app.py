@@ -103,13 +103,13 @@ def estimate_time_min(topic, exam):
 # -------------------------------
 st.title("📅 AI Study Planner (Dynamic Week View)")
 
-exam = st.selectbox("Select Exam", list(syllabus.keys()))
+exam = st.selectbox("Select Exam", list(syllabus.keys()), key="exam_select")
 subjects = list(syllabus[exam].keys())
-selected_subjects = st.multiselect("Select Subjects", subjects)
+selected_subjects = st.multiselect("Select Subjects", subjects, key="subject_select")
 
-start_date = st.date_input("Start Date", datetime.today())
-daily_hours = st.number_input("Daily study hours", 1.0, 12.0, 6.0)
-questions_per_topic = st.number_input("Questions per topic per day", 10, 200, 30)
+start_date = st.date_input("Start Date", datetime.today(), key="start_date")
+daily_hours = st.number_input("Daily study hours", 1.0, 12.0, 6.0, key="daily_hours")
+questions_per_topic = st.number_input("Questions per topic per day", 10, 200, 30, key="questions_per_topic")
 
 # -------------------------------
 # BUILD QUEUE
@@ -175,7 +175,11 @@ if selected_subjects and not st.session_state.calendar:
 # -------------------------------
 # TABS
 # -------------------------------
-tab1, tab2, tab3 = st.tabs(["📖 Study Plan", "📝 Question Practice", "✅ Day Completed"])
+tab1, tab2, tab3 = st.tabs([
+    "📖 Study Plan",
+    "📝 Question Practice",
+    "✅ Day Completed"
+])
 
 # -------------------------------
 # STUDY PLAN TAB (WEEKLY)
@@ -195,7 +199,7 @@ with tab1:
                 key = f"{day['date']}_{i}_{p['topic']}"
                 checked = key in st.session_state.completed
                 label = f"{p['subject']} → {p['topic']} ({p['time_min']} min / {round(p['time_min']/60,2)} h)"
-                if st.checkbox(label, checked, key=key):
+                if st.checkbox(label, checked, key=f"study_{key}"):
                     st.session_state.completed.add(key)
                 else:
                     st.session_state.completed.discard(key)
@@ -206,7 +210,7 @@ with tab1:
 with tab2:
     st.header("📝 Daily Question Practice")
     day_labels = [d["date"].strftime("%A, %d %b %Y") for d in st.session_state.calendar]
-    sel = st.selectbox("Select Day", day_labels)
+    sel = st.selectbox("Select Day (Practice)", day_labels, key="practice_day_select")
     idx = day_labels.index(sel)
     day = st.session_state.calendar[idx]
 
@@ -218,7 +222,7 @@ with tab2:
             f"{p['subject']} → {p['topic']} ({day['questions']} questions)",
             0, day["questions"],
             st.session_state.practice_done.get(key,0),
-            key=key
+            key=f"practice_{key}"
         )
 
 # -------------------------------
@@ -227,7 +231,7 @@ with tab2:
 with tab3:
     st.header("✅ Mark Day Completed")
     day_labels = [d["date"].strftime("%A, %d %b %Y") for d in st.session_state.calendar]
-    sel = st.selectbox("Select Day", day_labels)
+    sel = st.selectbox("Select Day (Day Completed)", day_labels, key="daycompleted_day_select")
     idx = day_labels.index(sel)
     day = st.session_state.calendar[idx]
 
@@ -239,7 +243,7 @@ with tab3:
         if key not in st.session_state.completed:
             unfinished.append(p)
 
-    if st.button("Confirm Day Completion"):
+    if st.button("Confirm Day Completion", key="confirm_day_btn"):
         if not unfinished:
             st.success("🎉 All subtopics completed!")
         else:
@@ -261,7 +265,8 @@ with tab3:
             for t in d["plan"]:
                 if t["subject"] != "FREE":
                     queue.append(t)
-        st.session_state.calendar[idx+1:] = generate_calendar(queue, st.session_state.calendar[idx+1]["date"], daily_hours)
+        if idx+1 < len(st.session_state.calendar):
+            st.session_state.calendar[idx+1:] = generate_calendar(queue, st.session_state.calendar[idx+1]["date"], daily_hours)
 
 # -------------------------------
 # Adaptive warning
