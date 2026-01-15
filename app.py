@@ -217,8 +217,8 @@ with tab1:
         st.subheader(f"Week {w_num}")
         for day_idx, day in enumerate(weeks[w_num]):
             day_type = str(day.get("type","STUDY")).upper()  # default to STUDY if missing
-st.markdown(f"**{day['date'].strftime('%A, %d %b %Y')} ({day_type} DAY)**")
-unfinished_today = []
+            st.markdown(f"**{day['date'].strftime('%A, %d %b %Y')} ({day_type} DAY)**")
+            unfinished_today = []
 
             for i, p in enumerate(day["plan"]):
                 if p["subject"] in ["FREE","REVISION","TEST"]:
