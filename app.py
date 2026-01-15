@@ -3,6 +3,7 @@ import streamlit as st
 import os, zipfile, gdown, fitz, json, re
 from collections import deque, defaultdict
 from datetime import datetime, timedelta
+import random
 
 # -------------------------------
 # CONFIG
@@ -101,7 +102,7 @@ def estimate_time_min(topic, exam):
 # -------------------------------
 # UI INPUTS
 # -------------------------------
-st.title("📅 AI Study Planner (Week-Based)")
+st.title("📅 AI Study Planner with Free/Revision/Test Days")
 
 exam = st.selectbox("Select Exam", list(syllabus.keys()), key="exam_select")
 subjects = list(syllabus[exam].keys())
@@ -110,6 +111,9 @@ selected_subjects = st.multiselect("Select Subjects", subjects, key="subject_sel
 start_date = st.date_input("Start Date", datetime.today(), key="start_date")
 daily_hours = st.number_input("Daily study hours", 1.0, 12.0, 6.0, key="daily_hours")
 questions_per_topic = st.number_input("Questions per topic per day", 10, 200, 30, key="questions_per_topic")
+subjects_per_day = st.selectbox("Number of subjects to study per day", [1,2,len(selected_subjects)], index=0, key="subjects_per_day")
+revision_every_n_days = st.number_input("Revision Day Frequency (every N days)", 5, 30, 7, key="revision_freq")
+test_every_n_days = st.number_input("Test Day Frequency (every N days)", 7, 30, 14, key="test_freq")
 
 # -------------------------------
 # BUILD QUEUE
@@ -132,37 +136,51 @@ def generate_calendar(queue, start_date, daily_hours):
     calendar = []
     streak = 0
     cur_date = datetime.combine(start_date, datetime.min.time())
+    day_count = 0
+    completed_topics = set()
 
     while queue:
         daily_min = int(daily_hours * 60)
         plan = []
 
-        while queue and daily_min > 0:
-            item = queue.popleft()
+        # assign subtopics based on subjects_per_day
+        subjects_today = list({item["subject"] for item in queue})[:subjects_per_day]
+        temp_queue = deque([item for item in queue if item["subject"] in subjects_today])
+        for _ in range(len(temp_queue)):
+            if daily_min <= 0: break
+            item = temp_queue.popleft()
             if item["time_min"] <= daily_min:
                 plan.append(item)
                 daily_min -= item["time_min"]
+                queue.remove(item)
+                completed_topics.add((item["subject"], item["topic"]))
             else:
                 plan.append({**item, "time_min": daily_min})
                 item["time_min"] -= daily_min
-                queue.appendleft(item)
                 daily_min = 0
 
+        # Decide if it's a free/revision/test day
+        day_type = "STUDY"
         if streak >= MAX_CONTINUOUS_DAYS:
-            calendar.append({
-                "date": cur_date,
-                "plan": [{"subject":"FREE","topic":"Rest / light revision","time_min":0}],
-                "questions":0
-            })
+            day_type = "FREE"
+            plan = [{"subject":"FREE","topic":"Rest / light revision","time_min":0}]
             streak = 0
-        else:
-            calendar.append({
-                "date": cur_date,
-                "plan": plan,
-                "questions": questions_per_topic
-            })
-            streak += 1
+        elif day_count % revision_every_n_days == 0 and day_count != 0:
+            day_type = "REVISION"
+            plan = [{"subject":"REVISION","topic":"Revise Completed Topics","time_min":int(daily_hours*60)}]
+        elif day_count % test_every_n_days == 0 and day_count != 0:
+            day_type = "TEST"
+            plan = [{"subject":"TEST","topic":"Test Completed Topics","time_min":int(daily_hours*60)}]
 
+        calendar.append({
+            "date": cur_date,
+            "plan": plan,
+            "questions": questions_per_topic,
+            "type": day_type
+        })
+
+        streak += 1 if day_type=="STUDY" else 0
+        day_count += 1
         cur_date += timedelta(days=1)
 
     return calendar
@@ -179,6 +197,10 @@ tab1, tab2 = st.tabs([
     "📝 Question Practice"
 ])
 
+# COLORS
+COLORS = ["#4CAF50","#2196F3","#FF9800","#9C27B0","#009688","#E91E63"]
+subject_color = {s: COLORS[i % len(COLORS)] for i, s in enumerate(selected_subjects)}
+
 # -------------------------------
 # STUDY PLAN TAB
 # -------------------------------
@@ -194,10 +216,14 @@ with tab1:
     for w_num in sorted(weeks.keys()):
         st.subheader(f"Week {w_num}")
         for day_idx, day in enumerate(weeks[w_num]):
-            st.markdown(f"**{day['date'].strftime('%A, %d %b %Y')}**")
+            st.markdown(f"**{day['date'].strftime('%A, %d %b %Y')} ({day['type']} DAY)**")
             unfinished_today = []
 
             for i, p in enumerate(day["plan"]):
+                if p["subject"] in ["FREE","REVISION","TEST"]:
+                    st.markdown(f"- **{p['subject']} → {p['topic']}**")
+                    continue
+
                 key = f"{day['date']}_{i}_{p['topic']}"
                 checked = key in st.session_state.completed
                 label = f"{p['subject']} → {p['topic']} ({p['time_min']} min / {round(p['time_min']/60,2)} h)"
@@ -205,8 +231,7 @@ with tab1:
                     st.session_state.completed.add(key)
                 else:
                     st.session_state.completed.discard(key)
-                    if p["subject"] != "FREE":
-                        unfinished_today.append(p)
+                    unfinished_today.append(p)
 
             # Immediate "Mark Day Completed" button
             if st.button(f"Mark Day Completed ({day['date'].strftime('%d %b %Y')})", key=f"complete_{day['date']}"):
@@ -214,19 +239,17 @@ with tab1:
                     st.success("🎉 All subtopics completed for this day!")
                 else:
                     st.warning(f"{len(unfinished_today)} subtopics unfinished. Moving to next day.")
-
                     # Ensure next day exists
                     if day_idx + 1 >= len(weeks[w_num]):
                         next_date = day["date"] + timedelta(days=1)
                         st.session_state.calendar.append({
                             "date": next_date,
                             "plan": [],
-                            "questions": questions_per_topic
+                            "questions": questions_per_topic,
+                            "type": "STUDY"
                         })
-
                     # Move unfinished topics to next day
                     st.session_state.calendar[day_idx + 1]["plan"] = unfinished_today + st.session_state.calendar[day_idx + 1]["plan"]
-
                     for u in unfinished_today:
                         st.write(f"• {u['subject']} → {u['topic']}")
 
@@ -241,7 +264,7 @@ with tab2:
     day = st.session_state.calendar[idx]
 
     for i, p in enumerate(day["plan"]):
-        if p["subject"] == "FREE":
+        if p["subject"] in ["FREE","REVISION","TEST"]:
             continue
         key = f"Q_{sel}_{i}"
         st.session_state.practice_done[key] = st.number_input(
