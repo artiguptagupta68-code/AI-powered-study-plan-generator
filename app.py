@@ -30,17 +30,7 @@ if os.path.exists(STATE_FILE):
         st.session_state.completed = set(json.load(f))
 
 # -------------------------------
-# DOWNLOAD & EXTRACT
-# -------------------------------
-if not os.path.exists(ZIP_PATH):
-    gdown.download(f"https://drive.google.com/uc?id={DRIVE_FILE_ID}", ZIP_PATH, quiet=True)
-
-if not os.path.exists(EXTRACT_DIR):
-    with zipfile.ZipFile(ZIP_PATH) as z:
-        z.extractall(EXTRACT_DIR)
-
-# -------------------------------
-# PDF PARSING
+# SYLLABUS FUNCTIONS
 # -------------------------------
 def clean_line(line):
     bad = ["annexure","notice","commission"]
@@ -79,11 +69,6 @@ def parse_syllabus(root):
                     data[exam][subject].extend(parts)
     return data
 
-syllabus = parse_syllabus(EXTRACT_DIR)
-if not syllabus:
-    st.error("❌ No syllabus found.")
-    st.stop()
-
 # -------------------------------
 # TIME ESTIMATION
 # -------------------------------
@@ -95,13 +80,37 @@ def estimate_time_min(topic, exam):
     return int(base*weight)
 
 # -------------------------------
-# UI INPUTS
+# USER INPUT: EXAM & SYLLABUS
 # -------------------------------
-st.title("📅 AI Study Planner")
+st.title("📚 AI-Powered Study Planner")
 
-exam = st.selectbox("Select Exam", list(syllabus.keys()), key="exam_select")
+exam = st.selectbox("Select Exam", ["NEET","IIT JEE","GATE"], key="exam_select")
+
+syllabus_source = st.radio("Syllabus Source", ["Use default syllabus", "Upload PDF(s)"], key="syllabus_source")
+syllabus_root = EXTRACT_DIR
+if syllabus_source=="Upload PDF(s)":
+    uploaded_files = st.file_uploader(f"Upload syllabus PDFs for {exam}", type=["pdf"], accept_multiple_files=True)
+    if uploaded_files:
+        os.makedirs(syllabus_root, exist_ok=True)
+        for f in uploaded_files:
+            with open(os.path.join(syllabus_root,f.name),"wb") as out:
+                out.write(f.read())
+        st.success(f"{len(uploaded_files)} files uploaded successfully")
+
+# Default: download zip if folder not exists
+if syllabus_source=="Use default syllabus" and not os.path.exists(syllabus_root):
+    if not os.path.exists(ZIP_PATH):
+        gdown.download(f"https://drive.google.com/uc?id={DRIVE_FILE_ID}", ZIP_PATH, quiet=True)
+    with zipfile.ZipFile(ZIP_PATH) as z:
+        z.extractall(EXTRACT_DIR)
+
+syllabus = parse_syllabus(syllabus_root)
+if not syllabus or exam not in syllabus:
+    st.error(f"No syllabus found for {exam}.")
+    st.stop()
+
 subjects = list(syllabus[exam].keys())
-selected_subjects = st.multiselect("Select Subjects", subjects, key="subject_select")
+selected_subjects = st.multiselect("Select Subjects", subjects, default=subjects)
 
 start_date = st.date_input("Start Date", datetime.today(), key="start_date")
 daily_hours = st.number_input("Daily study hours",1.0,12.0,6.0,key="daily_hours")
@@ -120,39 +129,27 @@ def build_queue():
     return q
 
 # -------------------------------
-# ROUND-ROBIN DAILY ASSIGNMENT
+# ROUND-ROBIN ASSIGNMENT
 # -------------------------------
 def assign_daily_plan(queue, daily_min):
-    plan = []
-
-    # All subjects with pending subtopics
-    subjects_today = list({item["subject"] for item in queue})
-    if not subjects_today:
-        return plan
-
-    # Per-subject queues
-    subject_queues = {s: deque([item for item in queue if item["subject"]==s]) for s in subjects_today}
-
-    # Round-robin allocation
-    while daily_min > 0 and any(subject_queues.values()):
+    plan=[]
+    subjects_today=list({item["subject"] for item in queue})
+    if not subjects_today: return plan
+    subject_queues={s:deque([item for item in queue if item["subject"]==s]) for s in subjects_today}
+    while daily_min>0 and any(subject_queues.values()):
         for s in subjects_today:
-            if not subject_queues[s]:
-                continue
-            item = subject_queues[s].popleft()
-            alloc = min(item["time_min"], daily_min)
-            plan.append({"subject": item["subject"], "topic": item["topic"], "time_min": alloc})
-            daily_min -= alloc
-            item["time_min"] -= alloc
-
-            # Remove from main queue if fully done
-            if item["time_min"] <= 0:
+            if not subject_queues[s]: continue
+            item=subject_queues[s].popleft()
+            alloc=min(item["time_min"],daily_min)
+            plan.append({"subject":item["subject"],"topic":item["topic"],"time_min":alloc})
+            daily_min-=alloc
+            item["time_min"]-=alloc
+            if item["time_min"]<=0:
                 for q_idx,q_item in enumerate(queue):
                     if q_item["subject"]==item["subject"] and q_item["topic"]==item["topic"]:
                         del queue[q_idx]
                         break
-            # else, item remains in queue with reduced time
-            if daily_min <= 0:
-                break
+            if daily_min<=0: break
     return plan
 
 # -------------------------------
@@ -166,7 +163,6 @@ def generate_calendar(queue,start_date,daily_hours):
     while queue:
         daily_min=int(daily_hours*60)
         plan=assign_daily_plan(queue,daily_min)
-
         day_type="STUDY"
         if streak>=MAX_CONTINUOUS_DAYS:
             day_type="FREE"
@@ -190,10 +186,9 @@ if selected_subjects and not st.session_state.calendar:
     st.session_state.calendar=generate_calendar(queue,start_date,daily_hours)
 
 # -------------------------------
-# TABS
+# TABS: Study Plan & Question Practice
 # -------------------------------
 tab1, tab2 = st.tabs(["📖 Study Plan","📝 Question Practice"])
-
 COLORS=["#4CAF50","#2196F3","#FF9800","#9C27B0","#009688","#E91E63"]
 subject_color={s:COLORS[i%len(COLORS)] for i,s in enumerate(selected_subjects)}
 
