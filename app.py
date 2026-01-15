@@ -7,9 +7,11 @@ from datetime import datetime, timedelta
 # -------------------------------
 # CONFIG
 # -------------------------------
+DRIVE_FILE_ID = "1S6fcsuq9KvICTsOBOdp6_WN9FhzruixM"
+ZIP_PATH = "plan.zip"
+EXTRACT_DIR = "syllabus_data"
 STATE_FILE = "progress.json"
 MAX_CONTINUOUS_DAYS = 6
-EXTRACT_DIR = "syllabus_data"
 
 st.set_page_config("📚 AI Study Planner", layout="wide")
 
@@ -43,8 +45,32 @@ def read_pdf(path):
                 lines.append(l.strip())
     return lines
 
+def detect_exam(lines):
+    text = " ".join(lines).upper()
+    if "NEET" in text: return "NEET"
+    if "JEE" in text: return "IIT JEE"
+    if "GATE" in text: return "GATE"
+    return None
+
+def parse_syllabus(root):
+    data = defaultdict(lambda: defaultdict(list))
+    for r,_,files in os.walk(root):
+        for f in files:
+            if not f.endswith(".pdf"): continue
+            lines = read_pdf(os.path.join(r,f))
+            exam = detect_exam(lines)
+            if not exam: continue
+            subject = None
+            for l in lines:
+                if l.isupper() and l.replace(" ","").isalpha():
+                    subject = l.title()
+                elif subject:
+                    parts = [p.strip() for p in l.split(",") if len(p.strip())>3]
+                    data[exam][subject].extend(parts)
+    return data
+
 def parse_uploaded_syllabus(files):
-    """Parse uploaded PDF syllabus and return JSON: subjects -> topics"""
+    """Parse uploaded PDFs into JSON: subjects -> topics"""
     data = defaultdict(list)
     for f in files:
         lines = read_pdf(f)
@@ -57,52 +83,75 @@ def parse_uploaded_syllabus(files):
                 data[subject].extend(parts)
     return data
 
-def estimate_time_min(topic):
-    """Simple AI-based time estimation"""
+def estimate_time_min(topic, exam=None):
     words = len(topic.split())
     complexity = len(re.findall(r"(theorem|numerical|derivation|proof)", topic.lower()))
     base = 15 + words*3 + complexity*10
-    return int(base)
+    weight = {"NEET":1.1,"IIT JEE":1.3,"GATE":1.5}.get(exam,1)
+    return int(base*weight)
 
 # -------------------------------
-# USER INPUT: EXAM NAME & SYLLABUS UPLOAD
+# USER INPUT: EXAM & SYLLABUS
 # -------------------------------
 st.title("📚 AI-Powered Study Planner")
 
-exam_name = st.text_input("Enter your Exam Name (any)")
+custom_plan = st.checkbox("Create a study plan of my choice / custom syllabus", key="custom_plan")
 
-uploaded_files = st.file_uploader(
-    "Upload syllabus PDF(s) for your exam",
-    type=["pdf"],
-    accept_multiple_files=True
-)
+if custom_plan:
+    exam_name = st.text_input("Enter your Exam Name", key="custom_exam")
+    uploaded_files = st.file_uploader(
+        f"Upload syllabus PDF(s) for {exam_name}",
+        type=["pdf"],
+        accept_multiple_files=True
+    )
+    if not uploaded_files:
+        st.warning("Please upload at least one PDF to create custom syllabus.")
+        st.stop()
+    syllabus_json = parse_uploaded_syllabus(uploaded_files)
+    if not syllabus_json:
+        st.error("No valid topics found in uploaded PDFs.")
+        st.stop()
+    subjects = list(syllabus_json.keys())
+else:
+    exam = st.selectbox("Select Exam", ["NEET","IIT JEE","GATE"], key="exam_select")
+    syllabus_source = st.radio("Syllabus Source", ["Use default syllabus", "Upload PDF(s)"], key="syllabus_source")
+    syllabus_root = EXTRACT_DIR
+    if syllabus_source=="Upload PDF(s)":
+        uploaded_files = st.file_uploader(f"Upload syllabus PDFs for {exam}", type=["pdf"], accept_multiple_files=True)
+        if uploaded_files:
+            os.makedirs(syllabus_root, exist_ok=True)
+            for f in uploaded_files:
+                with open(os.path.join(syllabus_root,f.name),"wb") as out:
+                    out.write(f.read())
+            st.success(f"{len(uploaded_files)} files uploaded successfully")
+    if syllabus_source=="Use default syllabus" and not os.path.exists(syllabus_root):
+        if not os.path.exists(ZIP_PATH):
+            gdown.download(f"https://drive.google.com/uc?id={DRIVE_FILE_ID}", ZIP_PATH, quiet=True)
+        with zipfile.ZipFile(ZIP_PATH) as z:
+            z.extractall(EXTRACT_DIR)
+    syllabus = parse_syllabus(syllabus_root)
+    if not syllabus or exam not in syllabus:
+        st.error(f"No syllabus found for {exam}.")
+        st.stop()
+    syllabus_json = syllabus[exam]
+    subjects = list(syllabus_json.keys())
 
-if not uploaded_files:
-    st.warning("Please upload at least one PDF syllabus to proceed.")
-    st.stop()
+selected_subjects = st.multiselect("Select Subjects", subjects, default=subjects)
 
-# Parse uploaded syllabus into JSON
-syllabus_json = parse_uploaded_syllabus(uploaded_files)
-if not syllabus_json:
-    st.error("No valid topics found in the uploaded PDFs.")
-    st.stop()
-
-selected_subjects = st.multiselect("Select Subjects to include in study plan", list(syllabus_json.keys()), default=list(syllabus_json.keys()))
-
-start_date = st.date_input("Start Date", datetime.today())
-daily_hours = st.number_input("Daily study hours",1.0,12.0,6.0)
-questions_per_topic = st.number_input("Questions per topic per day",10,200,30)
-revision_every_n_days = st.number_input("Revision Day Frequency (every N days)",5,30,7)
-test_every_n_days = st.number_input("Test Day Frequency (every N days)",7,30,14)
+start_date = st.date_input("Start Date", datetime.today(), key="start_date")
+daily_hours = st.number_input("Daily study hours",1.0,12.0,6.0,key="daily_hours")
+questions_per_topic = st.number_input("Questions per topic per day",10,200,30,key="questions_per_topic")
+revision_every_n_days = st.number_input("Revision Day Frequency (every N days)",5,30,7,key="revision_freq")
+test_every_n_days = st.number_input("Test Day Frequency (every N days)",7,30,14,key="test_freq")
 
 # -------------------------------
 # BUILD QUEUE
 # -------------------------------
 def build_queue():
-    q = deque()
+    q=deque()
     for s in selected_subjects:
         for t in syllabus_json[s]:
-            q.append({"subject":s,"topic":t,"time_min":estimate_time_min(t)})
+            q.append({"subject":s,"topic":t,"time_min":estimate_time_min(t, exam_name if custom_plan else exam)})
     return q
 
 # -------------------------------
@@ -151,7 +200,6 @@ def generate_calendar(queue,start_date,daily_hours):
         elif day_count%test_every_n_days==0 and day_count!=0:
             day_type="TEST"
             plan=[{"subject":"TEST","topic":"Test Completed Topics","time_min":int(daily_hours*60)}]
-
         calendar.append({"date":cur_date,"plan":plan,"questions":questions_per_topic,"type":day_type})
         streak+=1 if day_type=="STUDY" else 0
         day_count+=1
@@ -163,7 +211,7 @@ if selected_subjects and not st.session_state.calendar:
     st.session_state.calendar=generate_calendar(queue,start_date,daily_hours)
 
 # -------------------------------
-# TABS
+# TABS: Study Plan & Question Practice
 # -------------------------------
 tab1, tab2 = st.tabs(["📖 Study Plan","📝 Question Practice"])
 COLORS=["#4CAF50","#2196F3","#FF9800","#9C27B0","#009688","#E91E63"]
