@@ -4,9 +4,9 @@ import os, zipfile, gdown, fitz, json, re
 from collections import defaultdict, deque
 from datetime import datetime, timedelta
 
-# -------------------------------------------------
+# =================================================
 # CONFIG
-# -------------------------------------------------
+# =================================================
 DRIVE_FILE_ID = "1S6fcsuq9KvICTsOBOdp6_WN9FhzruixM"
 ZIP_PATH = "plan.zip"
 EXTRACT_DIR = "syllabus_data"
@@ -17,9 +17,9 @@ FREE_DAY_BUFFER_MIN = 300  # 5 hours
 
 st.set_page_config("📚 AI Study Planner", layout="wide")
 
-# -------------------------------------------------
+# =================================================
 # SESSION STATE
-# -------------------------------------------------
+# =================================================
 if "completed" not in st.session_state:
     st.session_state.completed = set()
 if "calendar" not in st.session_state:
@@ -31,9 +31,9 @@ if os.path.exists(STATE_FILE):
     with open(STATE_FILE, "r") as f:
         st.session_state.completed = set(json.load(f))
 
-# -------------------------------------------------
+# =================================================
 # DOWNLOAD & EXTRACT
-# -------------------------------------------------
+# =================================================
 if not os.path.exists(ZIP_PATH):
     gdown.download(f"https://drive.google.com/uc?id={DRIVE_FILE_ID}", ZIP_PATH, quiet=True)
 
@@ -41,12 +41,12 @@ if not os.path.exists(EXTRACT_DIR):
     with zipfile.ZipFile(ZIP_PATH) as z:
         z.extractall(EXTRACT_DIR)
 
-# -------------------------------------------------
+# =================================================
 # PDF PARSING
-# -------------------------------------------------
-def clean_line(l):
+# =================================================
+def clean_line(line):
     bad = ["annexure", "notice", "commission"]
-    return l.strip() and not any(b in l.lower() for b in bad) and len(l) < 120
+    return line.strip() and not any(b in line.lower() for b in bad) and len(line) < 120
 
 def read_pdf(path):
     doc = fitz.open(path)
@@ -59,10 +59,13 @@ def read_pdf(path):
 
 def detect_exam(lines):
     text = " ".join(lines).upper()
-    if "NEET" in text: return "NEET", "UG"
-    if "JEE" in text: return "IIT JEE", "MAIN"
-    if "GATE" in text: return "GATE", "GEN"
-    return None, None
+    if "NEET" in text:
+        return "NEET"
+    if "JEE" in text:
+        return "IIT JEE"
+    if "GATE" in text:
+        return "GATE"
+    return None
 
 def parse_syllabus(root):
     data = defaultdict(lambda: defaultdict(list))
@@ -73,7 +76,7 @@ def parse_syllabus(root):
                 continue
 
             lines = read_pdf(os.path.join(r, f))
-            exam, stage = detect_exam(lines)
+            exam = detect_exam(lines)
             if not exam:
                 continue
 
@@ -87,23 +90,31 @@ def parse_syllabus(root):
 
     return data
 
+# =================================================
+# LOAD SYLLABUS  ✅ FIXED
+# =================================================
+syllabus = parse_syllabus(EXTRACT_DIR)
 
-# -------------------------------------------------
+if not syllabus:
+    st.error("❌ No syllabus found. Check PDF files.")
+    st.stop()
+
+# =================================================
 # AI TIME ESTIMATION
-# -------------------------------------------------
+# =================================================
 def estimate_time_min(topic, exam):
     words = len(topic.split())
     complexity = len(re.findall(r"(theorem|numerical|derivation|proof)", topic.lower()))
     base = 15 + words * 3 + complexity * 10
-    weight = {"NEET":1.1,"IIT JEE":1.3,"GATE":1.5}.get(exam,1)
+    weight = {"NEET": 1.1, "IIT JEE": 1.3, "GATE": 1.5}.get(exam, 1)
     return int(base * weight)
 
-# -------------------------------------------------
+# =================================================
 # UI INPUTS
-# -------------------------------------------------
+# =================================================
 st.title("📅 AI-Powered Study Planner")
 
-exam = st.selectbox("Select Exam", syllabus.keys())
+exam = st.selectbox("Select Exam", list(syllabus.keys()))
 subjects = list(syllabus[exam].keys())
 selected_subjects = st.multiselect("Select Subjects", subjects)
 
@@ -111,9 +122,9 @@ start_date = st.date_input("Start Date", datetime.today())
 daily_hours = st.number_input("Daily study hours", 1.0, 12.0, 6.0)
 questions_per_day = st.number_input("Questions per topic per day", 10, 200, 30)
 
-# -------------------------------------------------
+# =================================================
 # BUILD QUEUE
-# -------------------------------------------------
+# =================================================
 def build_queue():
     q = deque()
     for s in selected_subjects:
@@ -125,9 +136,9 @@ def build_queue():
             })
     return q
 
-# -------------------------------------------------
+# =================================================
 # PLAN GENERATION (WITH CARRY FORWARD)
-# -------------------------------------------------
+# =================================================
 if selected_subjects:
     queue = build_queue()
     calendar = []
@@ -152,8 +163,8 @@ if selected_subjects:
         if streak >= MAX_CONTINUOUS_DAYS:
             calendar.append({
                 "date": cur_date,
-                "plan": [{"subject":"FREE","topic":"Rest / light revision","time_min":0}],
-                "questions":0
+                "plan": [{"subject": "FREE", "topic": "Rest / light revision", "time_min": 0}],
+                "questions": 0
             })
             streak = 0
         else:
@@ -168,56 +179,60 @@ if selected_subjects:
 
     st.session_state.calendar = calendar
 
-# -------------------------------------------------
+# =================================================
 # TABS
-# -------------------------------------------------
+# =================================================
 tab1, tab2 = st.tabs(["📖 Study Plan", "📝 Question Practice"])
 
-# -------------------------------------------------
+# =================================================
 # STUDY PLAN TAB
-# -------------------------------------------------
+# =================================================
 with tab1:
     st.header("📆 Study Calendar")
     for day in st.session_state.calendar:
         st.subheader(day["date"].strftime("%A, %d %b %Y"))
-        for i,p in enumerate(day["plan"]):
+        for i, p in enumerate(day["plan"]):
             key = f"{day['date']}_{i}_{p['topic']}"
-            checked = key in st.session_state.completed
             label = f"{p['subject']} → {p['topic']} ({p['time_min']} min / {round(p['time_min']/60,2)} h)"
+            checked = key in st.session_state.completed
+
             if st.checkbox(label, checked, key=key):
                 st.session_state.completed.add(key)
             else:
                 st.session_state.completed.discard(key)
 
-# -------------------------------------------------
+# =================================================
 # QUESTION PRACTICE TAB
-# -------------------------------------------------
+# =================================================
 with tab2:
     st.header("📝 Daily Question Practice")
+
     day_labels = [d["date"].strftime("%A, %d %b %Y") for d in st.session_state.calendar]
-    sel = st.selectbox("Select Day", day_labels)
-    idx = day_labels.index(sel)
+    selected_day = st.selectbox("Select Day", day_labels)
+    idx = day_labels.index(selected_day)
     day = st.session_state.calendar[idx]
 
-    for i,p in enumerate(day["plan"]):
-        if p["subject"] == "FREE": continue
-        key = f"Q_{sel}_{i}"
+    for i, p in enumerate(day["plan"]):
+        if p["subject"] == "FREE":
+            continue
+
+        qkey = f"Q_{selected_day}_{i}"
         done = st.number_input(
             f"{p['subject']} → {p['topic']} ({day['questions']} questions)",
             0, day["questions"],
-            st.session_state.practice_done.get(key,0),
-            key=key
+            st.session_state.practice_done.get(qkey, 0),
+            key=qkey
         )
-        st.session_state.practice_done[key] = done
+        st.session_state.practice_done[qkey] = done
 
-# -------------------------------------------------
+# =================================================
 # ADAPTIVE WARNING
-# -------------------------------------------------
+# =================================================
 unfinished_min = 0
 for d in st.session_state.calendar:
-    for i,p in enumerate(d["plan"]):
+    for i, p in enumerate(d["plan"]):
         key = f"{d['date']}_{i}_{p['topic']}"
-        if key not in st.session_state.completed and p["subject"] not in ["FREE"]:
+        if key not in st.session_state.completed and p["subject"] != "FREE":
             unfinished_min += p["time_min"]
 
 if unfinished_min > FREE_DAY_BUFFER_MIN:
@@ -226,8 +241,8 @@ if unfinished_min > FREE_DAY_BUFFER_MIN:
         "Suggested: add a free/revision day."
     )
 
-# -------------------------------------------------
+# =================================================
 # SAVE STATE
-# -------------------------------------------------
-with open(STATE_FILE,"w") as f:
+# =================================================
+with open(STATE_FILE, "w") as f:
     json.dump(list(st.session_state.completed), f)
