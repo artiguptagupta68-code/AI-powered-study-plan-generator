@@ -232,17 +232,18 @@ with tab2:
             idx=0
         day = st.session_state.calendar[idx]
 
-        num_questions = st.number_input("Number of questions to practice",1,200,30,key="num_questions")
-        q_type = st.selectbox("Type of questions", ["MCQs","Subjective","Long Questions"], key="question_type")
+        num_questions = st.number_input("Number of questions to practice",1,200,30,key=f"num_questions_{idx}")
+        q_type = st.selectbox("Type of questions", ["MCQs","Subjective","Long Questions"], key=f"qtype_{idx}")
 
-        for i,p in enumerate(day["plan"]):
+        # Show only topics assigned for study
+        for i, p in enumerate(day["plan"]):
             if p["subject"] in ["FREE","REVISION","TEST"]:
                 continue
-            key=f"Q_{sel}_{i}"
-            st.session_state.practice_done[key]=st.number_input(
+            key = f"{sel}_{p['subject']}_{p['topic']}"
+            st.session_state.practice_done[key] = st.number_input(
                 f"{p['subject']} → {p['topic']} ({num_questions} {q_type})",
-                0,num_questions,
-                st.session_state.practice_done.get(key,0),
+                min_value=0, max_value=num_questions,
+                value=st.session_state.practice_done.get(key,0),
                 key=f"practice_{key}"
             )
 
