@@ -11,8 +11,9 @@ DRIVE_FILE_ID = "1S6fcsuq9KvICTsOBOdp6_WN9FhzruixM"
 ZIP_PATH = "plan.zip"
 EXTRACT_DIR = "syllabus_data"
 STATE_FILE = "progress.json"
-MIN_SUBTOPIC_TIME_H = 0.33  # 20 min default
-DEFAULT_FREE_DAY_EVERY = 5  # free day after N study days
+MIN_SUBTOPIC_TIME_H = 0.33
+DEFAULT_FREE_DAY_EVERY = 5
+MAX_SCHEDULE_DAYS = 365  # prevent OverflowError
 
 st.set_page_config("📚 Study Planner", layout="wide")
 
@@ -42,14 +43,14 @@ if not os.path.exists(EXTRACT_DIR):
 # ----------------------------
 def is_garbage(line):
     bad = ["government","commission","notice","annexure"]
-    return any(b in line.lower() for b in bad) or len(line)>120
+    return any(b in line.lower() for b in bad) or len(line) > 120
 
 def read_pdf(path):
     doc = fitz.open(path)
     lines = []
     for p in doc:
         for l in p.get_text().split("\n"):
-            l=l.strip()
+            l = l.strip()
             if l and not is_garbage(l):
                 lines.append(l)
     return lines
@@ -83,7 +84,7 @@ def parse_syllabus(root):
                 elif ":" in l and subj:
                     topic = l.replace(":","").strip()
                 elif subj and topic:
-                    parts = [p.strip() for p in l.split(",") if len(p)>3]
+                    parts = [p.strip() for p in l.split(",") if len(p) > 3]
                     data[exam][stage][subj][topic].extend(parts)
     return data
 
@@ -134,10 +135,12 @@ with tab1:
         cur_date = datetime.combine(start_date, datetime.min.time())
         study_day_count = 0
         carry_forward = deque()
-        total_extra_days = 0
+        days_generated = 0
 
-        # DYNAMIC CALENDAR LOOP
-        while queue or carry_forward:
+        # ----------------------------
+        # DYNAMIC CALENDAR LOOP WITH LIMIT
+        # ----------------------------
+        while (queue or carry_forward) and days_generated < MAX_SCHEDULE_DAYS:
             rem_h = daily_hours
             plan = []
 
@@ -169,11 +172,14 @@ with tab1:
                 item["time_h"] -= alloc
                 if item["time_h"]>0:
                     carry_forward.append(item)
-                    total_extra_days += 1
 
             calendar.append({"date":cur_date,"day_type":"Study","plan":plan,"questions":questions_per_topic})
             cur_date += timedelta(days=1)
             study_day_count += 1
+            days_generated += 1
+
+        if days_generated >= MAX_SCHEDULE_DAYS:
+            st.warning("⚠️ Maximum schedule limit reached. Some topics may remain unscheduled.")
 
         st.session_state.calendar_cache = calendar
 
@@ -203,34 +209,6 @@ with tab1:
                         st.session_state.completed_subtopics.add(key)
                     else:
                         st.session_state.completed_subtopics.discard(key)
-
-                # manual carry-forward button
-                if st.button(f"✅ Mark {day['date']} as Completed", key=f"done_{day['date']}"):
-                    carry = [s for k,s in day_keys if k not in st.session_state.completed_subtopics]
-                    if carry:
-                        next_day = {"date":day["date"]+timedelta(days=1),"day_type":"Study","plan":carry,"questions":day["questions"]}
-                        st.session_state.calendar_cache.append(next_day)
-                        st.warning("Unfinished topics carried forward to next day")
-
-        # ----------------------------
-        # PROGRESS
-        # ----------------------------
-        st.header("📊 Subject Progress")
-        subject_day_used = defaultdict(int)
-        for day in st.session_state.calendar_cache:
-            for s in day.get("plan",[]):
-                key = f"{day['date']}_{s['subject']}_{s['subtopic']}"
-                if key in st.session_state.completed_subtopics:
-                    subject_day_used[s["subject"]] += 1
-
-        cols = st.columns(len(selected_subjects))
-        for col,s in zip(cols,selected_subjects):
-            total = len([t for t in syllabus[exam][stage][s].values() for t2 in t for t2 in t])  # total subtopics
-            done = subject_day_used[s]
-            remain = max(0,total-done)
-            col.markdown(f"<h3 style='color:{subject_color[s]}'>{s}</h3>",unsafe_allow_html=True)
-            col.progress(done/total if total else 0)
-            col.caption(f"⏳ {remain} topics remaining")
 
 # ----------------------------
 # QUESTION PRACTICE TAB
