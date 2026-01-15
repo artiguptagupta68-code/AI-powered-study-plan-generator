@@ -13,7 +13,7 @@ EXTRACT_DIR = "syllabus_data"
 STATE_FILE = "progress.json"
 
 MAX_CONTINUOUS_DAYS = 6
-FREE_DAY_BUFFER_MIN = 300  # 5 hours
+FREE_DAY_BUFFER_MIN = 300  # minutes
 
 st.set_page_config("📚 AI Study Planner", layout="wide")
 
@@ -59,22 +59,17 @@ def read_pdf(path):
 
 def detect_exam(lines):
     text = " ".join(lines).upper()
-    if "NEET" in text:
-        return "NEET"
-    if "JEE" in text:
-        return "IIT JEE"
-    if "GATE" in text:
-        return "GATE"
+    if "NEET" in text: return "NEET"
+    if "JEE" in text: return "IIT JEE"
+    if "GATE" in text: return "GATE"
     return None
 
 def parse_syllabus(root):
     data = defaultdict(lambda: defaultdict(list))
-
     for r, _, files in os.walk(root):
         for f in files:
             if not f.endswith(".pdf"):
                 continue
-
             lines = read_pdf(os.path.join(r, f))
             exam = detect_exam(lines)
             if not exam:
@@ -87,16 +82,14 @@ def parse_syllabus(root):
                 elif subject:
                     parts = [p.strip() for p in l.split(",") if len(p.strip()) > 3]
                     data[exam][subject].extend(parts)
-
     return data
 
 # =================================================
-# LOAD SYLLABUS  ✅ FIXED
+# LOAD SYLLABUS
 # =================================================
 syllabus = parse_syllabus(EXTRACT_DIR)
-
 if not syllabus:
-    st.error("❌ No syllabus found. Check PDF files.")
+    st.error("❌ No syllabus data found.")
     st.stop()
 
 # =================================================
@@ -106,7 +99,7 @@ def estimate_time_min(topic, exam):
     words = len(topic.split())
     complexity = len(re.findall(r"(theorem|numerical|derivation|proof)", topic.lower()))
     base = 15 + words * 3 + complexity * 10
-    weight = {"NEET": 1.1, "IIT JEE": 1.3, "GATE": 1.5}.get(exam, 1)
+    weight = {"NEET":1.1, "IIT JEE":1.3, "GATE":1.5}.get(exam,1)
     return int(base * weight)
 
 # =================================================
@@ -137,7 +130,7 @@ def build_queue():
     return q
 
 # =================================================
-# PLAN GENERATION (WITH CARRY FORWARD)
+# PLAN GENERATION
 # =================================================
 if selected_subjects:
     queue = build_queue()
@@ -163,8 +156,8 @@ if selected_subjects:
         if streak >= MAX_CONTINUOUS_DAYS:
             calendar.append({
                 "date": cur_date,
-                "plan": [{"subject": "FREE", "topic": "Rest / light revision", "time_min": 0}],
-                "questions": 0
+                "plan": [{"subject":"FREE","topic":"Rest / light revision","time_min":0}],
+                "questions":0
             })
             streak = 0
         else:
@@ -182,48 +175,97 @@ if selected_subjects:
 # =================================================
 # TABS
 # =================================================
-tab1, tab2 = st.tabs(["📖 Study Plan", "📝 Question Practice"])
+tab1, tab2, tab3 = st.tabs([
+    "📖 Study Plan",
+    "📝 Question Practice",
+    "✅ Day Completed"
+])
 
 # =================================================
-# STUDY PLAN TAB
+# STUDY PLAN TAB (VISUAL)
 # =================================================
 with tab1:
     st.header("📆 Study Calendar")
+
     for day in st.session_state.calendar:
-        st.subheader(day["date"].strftime("%A, %d %b %Y"))
+        st.markdown(
+            f"""
+            <div style="background:#f8fafc;padding:15px;
+            border-radius:12px;margin-bottom:15px;
+            border-left:6px solid #4f46e5;">
+            <h4>{day['date'].strftime('%A, %d %b %Y')}</h4>
+            """,
+            unsafe_allow_html=True
+        )
+
         for i, p in enumerate(day["plan"]):
             key = f"{day['date']}_{i}_{p['topic']}"
-            label = f"{p['subject']} → {p['topic']} ({p['time_min']} min / {round(p['time_min']/60,2)} h)"
             checked = key in st.session_state.completed
-
+            label = f"{p['subject']} → {p['topic']} ({p['time_min']} min / {round(p['time_min']/60,2)} h)"
             if st.checkbox(label, checked, key=key):
                 st.session_state.completed.add(key)
             else:
                 st.session_state.completed.discard(key)
 
+        st.markdown("</div>", unsafe_allow_html=True)
+
 # =================================================
-# QUESTION PRACTICE TAB
+# PRACTICE TAB
 # =================================================
 with tab2:
-    st.header("📝 Daily Question Practice")
-
-    day_labels = [d["date"].strftime("%A, %d %b %Y") for d in st.session_state.calendar]
-    selected_day = st.selectbox("Select Day", day_labels)
-    idx = day_labels.index(selected_day)
+    st.header("📝 Question Practice")
+    days = [d["date"].strftime("%A, %d %b %Y") for d in st.session_state.calendar]
+    sel = st.selectbox("Select Day", days)
+    idx = days.index(sel)
     day = st.session_state.calendar[idx]
 
     for i, p in enumerate(day["plan"]):
         if p["subject"] == "FREE":
             continue
-
-        qkey = f"Q_{selected_day}_{i}"
-        done = st.number_input(
+        key = f"Q_{sel}_{i}"
+        st.session_state.practice_done[key] = st.number_input(
             f"{p['subject']} → {p['topic']} ({day['questions']} questions)",
             0, day["questions"],
-            st.session_state.practice_done.get(qkey, 0),
-            key=qkey
+            st.session_state.practice_done.get(key, 0),
+            key=key
         )
-        st.session_state.practice_done[qkey] = done
+
+# =================================================
+# DAY COMPLETED TAB
+# =================================================
+with tab3:
+    st.header("✅ Mark Day Completed")
+
+    days = [d["date"].strftime("%A, %d %b %Y") for d in st.session_state.calendar]
+    sel = st.selectbox("Select Day", days)
+    idx = days.index(sel)
+    day = st.session_state.calendar[idx]
+
+    unfinished = []
+    for i, p in enumerate(day["plan"]):
+        if p["subject"] == "FREE":
+            continue
+        key = f"{day['date']}_{i}_{p['topic']}"
+        if key not in st.session_state.completed:
+            unfinished.append(p)
+
+    if st.button("Confirm Day Completion"):
+        if not unfinished:
+            st.success("🎉 All subtopics completed!")
+        else:
+            if idx + 1 == len(st.session_state.calendar):
+                st.session_state.calendar.append({
+                    "date": day["date"] + timedelta(days=1),
+                    "plan": [],
+                    "questions": day["questions"]
+                })
+
+            st.session_state.calendar[idx + 1]["plan"] = unfinished + \
+                st.session_state.calendar[idx + 1]["plan"]
+
+            st.warning("Unfinished subtopics moved to next day")
+            for u in unfinished:
+                st.write(f"• {u['subject']} → {u['topic']}")
 
 # =================================================
 # ADAPTIVE WARNING
@@ -238,7 +280,7 @@ for d in st.session_state.calendar:
 if unfinished_min > FREE_DAY_BUFFER_MIN:
     st.warning(
         f"⚠️ {unfinished_min} min ({round(unfinished_min/60,2)} h) pending. "
-        "Suggested: add a free/revision day."
+        "Consider adding a free/revision day."
     )
 
 # =================================================
