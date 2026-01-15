@@ -13,8 +13,8 @@ EXTRACT_DIR = "syllabus_data"
 STATE_FILE = "progress.json"
 MIN_SUBTOPIC_TIME_H = 0.33
 DEFAULT_FREE_DAY_EVERY = 5
-MAX_SCHEDULE_DAYS = 365 * 5  # 5 years max scheduling
-MAX_DATE = datetime(9999,12,31)
+MAX_SCHEDULE_DAYS = 365 * 5  # 5 years max
+MAX_DATE = datetime(9999, 12, 31)
 
 st.set_page_config("📚 Study Planner", layout="wide")
 
@@ -43,7 +43,7 @@ if not os.path.exists(EXTRACT_DIR):
 # PDF CLEANING
 # ----------------------------
 def is_garbage(line):
-    bad = ["government","commission","notice","annexure"]
+    bad = ["government", "commission", "notice", "annexure"]
     return any(b in line.lower() for b in bad) or len(line) > 120
 
 def read_pdf(path):
@@ -137,7 +137,7 @@ with tab1:
         else:
             calendar = []
             cur_date = datetime.combine(start_date, datetime.min.time())
-            study_day_count = 0  # counts study days only
+            study_day_count = 0  # only increments for real study days
             carry_forward = deque()
             days_generated = 0
 
@@ -148,11 +148,13 @@ with tab1:
                 rem_h = daily_hours
                 plan = []
 
-                # Free day logic after first study day
-                if free_day_every > 0 and study_day_count > 0 and study_day_count % free_day_every == 0:
+                # Free day logic: only after at least one study day
+                is_free_day = free_day_every > 0 and study_day_count > 0 and study_day_count % free_day_every == 0
+                if is_free_day:
                     plan.append({"subject":"FREE DAY","subtopic":"Rest / light reading","time_min":0})
                     calendar.append({"date":cur_date,"day_type":"Free","plan":plan,"questions":0})
                     cur_date += timedelta(days=1)
+                    days_generated += 1
                     continue
 
                 # Carry-forward topics first
@@ -177,7 +179,7 @@ with tab1:
                     if item["time_h"] > 0:
                         carry_forward.append(item)
 
-                # Append today's plan
+                # Append the study day
                 calendar.append({"date":cur_date,"day_type":"Study","plan":plan,"questions":questions_per_topic})
 
                 # Increment counters
