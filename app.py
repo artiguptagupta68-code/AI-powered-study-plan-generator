@@ -121,7 +121,7 @@ def build_queue():
     return q
 
 # -------------------------------
-# ROUND-ROBIN DAILY ASSIGNMENT (WORKING FOR MULTI-SUBJECT)
+# ROUND-ROBIN DAILY ASSIGNMENT
 # -------------------------------
 def assign_daily_plan(queue, daily_min, subjects_per_day):
     plan = []
@@ -138,7 +138,7 @@ def assign_daily_plan(queue, daily_min, subjects_per_day):
         daily_min -= alloc
         item["time_min"] -= alloc
         if item["time_min"] <= 0:
-            queue.pop(idx)
+            del queue[idx]   # ✅ fixed pop error
         else:
             idx += 1
     return plan
