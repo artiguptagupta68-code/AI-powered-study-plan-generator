@@ -25,6 +25,8 @@ if "completed_subtopics" not in st.session_state:
     st.session_state.completed_subtopics = set()
 if "calendar_cache" not in st.session_state:
     st.session_state.calendar_cache = []
+if "practice_completed" not in st.session_state:
+    st.session_state.practice_completed = {}
 
 if os.path.exists(STATE_FILE):
     with open(STATE_FILE, "r") as f:
@@ -191,24 +193,25 @@ with tab1:
             st.session_state.calendar_cache = calendar
 
             # ----------------------------
-            # DISPLAY CALENDAR
+            # DISPLAY STUDY CALENDAR
             # ----------------------------
             st.header("📆 Study Calendar")
             for day in calendar:
                 st.subheader(day["date"].strftime("%A, %d %b %Y") + f" ({day['day_type']}) | Questions: {day['questions']}")
                 for i, s in enumerate(day["plan"]):
-                    key = f"{day['date']}_{i}_{s['subtopic']}"
-                    checked = key in st.session_state.completed_subtopics
-                    hrs = round(s['time_min']/60,2)
-                    ticked = st.checkbox(
-                        f"{s['subject']} → {s['subtopic']} ({s['time_min']} min ({hrs} h))",
-                        value=checked,
-                        key=key
-                    )
-                    if ticked:
-                        st.session_state.completed_subtopics.add(key)
-                    else:
-                        st.session_state.completed_subtopics.discard(key)
+                    if s["subject"] != "FREE DAY":
+                        key = f"{day['date']}_{i}_{s['subtopic']}"
+                        checked = key in st.session_state.completed_subtopics
+                        hrs = round(s['time_min']/60,2)
+                        ticked = st.checkbox(
+                            f"{s['subtopic']} ({s['time_min']} min ({hrs} h))",
+                            value=checked,
+                            key=key
+                        )
+                        if ticked:
+                            st.session_state.completed_subtopics.add(key)
+                        else:
+                            st.session_state.completed_subtopics.discard(key)
 
 # ----------------------------
 # QUESTION PRACTICE TAB
@@ -226,10 +229,33 @@ with tab2:
         subjects_q = st.multiselect("Select subjects for practice", subjects)
 
         st.subheader(f"Topics scheduled on {selected_day_str}:")
-        for t in today["plan"]:
+
+        # Track questions per subject
+        subject_done = {s:0 for s in subjects_q}
+        subject_total = {s:0 for s in subjects_q}
+
+        for i, t in enumerate(today["plan"]):
             if t["subject"] in subjects_q and t["subject"] != "FREE DAY":
-                hrs = round(t['time_min']/60,2)
-                st.markdown(f"- {t['subject']} → {t['subtopic']} ({t['time_min']} min ({hrs} h), {today['questions']} questions)")
+                key = f"q_{selected_day_str}_{i}_{t['subtopic']}"
+                total_q = today["questions"]
+                subject_total[t["subject"]] += total_q
+                done_q = st.number_input(
+                    f"{t['subtopic']} ({t['time_min']} min / {round(t['time_min']/60,2)} h)",
+                    min_value=0, max_value=total_q,
+                    value=st.session_state.practice_completed.get(key,0),
+                    key=key
+                )
+                st.session_state.practice_completed[key] = done_q
+                subject_done[t["subject"]] += done_q
+
+        # Show progress bars per subject
+        st.header("📊 Practice Progress")
+        for s in subjects_q:
+            total = subject_total[s] if subject_total[s] > 0 else 1
+            done = subject_done[s]
+            st.markdown(f"**{s}**")
+            st.progress(done / total)
+            st.caption(f"⏳ {done}/{total} questions completed")
 
 # ----------------------------
 # SAVE STATE
