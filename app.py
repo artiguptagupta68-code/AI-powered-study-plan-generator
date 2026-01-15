@@ -110,7 +110,7 @@ subjects = list(syllabus[exam][stage].keys())
 with tab1:
     st.header("📚 Study Planner")
     selected_subjects = st.multiselect("Subjects to study", subjects)
-    start_date = st.date_input("📆 Start Date", datetime.today())
+    start_date = st.date_input("📆 Start Date", datetime.today(), min_value=datetime(2000,1,1), max_value=datetime(2100,12,31))
     daily_hours = st.number_input("Daily study hours", min_value=1.0, value=6.0)
     free_day_every = st.number_input("Free day after every N study days", min_value=0, value=DEFAULT_FREE_DAY_EVERY)
     questions_per_topic = st.number_input("Questions per topic", min_value=0, value=20)
@@ -132,84 +132,90 @@ with tab1:
 
     if selected_subjects:
         queue = build_queue()
-        calendar = []
-        cur_date = datetime.combine(start_date, datetime.min.time())
-        study_day_count = 0
-        carry_forward = deque()
-        days_generated = 0
+        if not queue:
+            st.warning("No topics found for selected subjects/stage/exam.")
+        else:
+            calendar = []
+            cur_date = datetime.combine(start_date, datetime.min.time())
+            study_day_count = 0  # counts study days only
+            carry_forward = deque()
+            days_generated = 0
 
-        # ----------------------------
-        # DYNAMIC CALENDAR LOOP WITH OVERFLOW CHECK
-        # ----------------------------
-        while (queue or carry_forward) and days_generated < MAX_SCHEDULE_DAYS and cur_date < MAX_DATE:
-            rem_h = daily_hours
-            plan = []
+            # ----------------------------
+            # DYNAMIC CALENDAR LOOP
+            # ----------------------------
+            while (queue or carry_forward) and days_generated < MAX_SCHEDULE_DAYS and cur_date < MAX_DATE:
+                rem_h = daily_hours
+                plan = []
 
-            # Free day logic
-            if free_day_every>0 and study_day_count>0 and study_day_count%free_day_every==0:
-                plan.append({"subject":"FREE DAY","subtopic":"Rest / light reading","time_min":0})
-                calendar.append({"date":cur_date,"day_type":"Free","plan":plan,"questions":0})
+                # Free day logic after first study day
+                if free_day_every > 0 and study_day_count > 0 and study_day_count % free_day_every == 0:
+                    plan.append({"subject":"FREE DAY","subtopic":"Rest / light reading","time_min":0})
+                    calendar.append({"date":cur_date,"day_type":"Free","plan":plan,"questions":0})
+                    cur_date += timedelta(days=1)
+                    continue
+
+                # Carry-forward topics first
+                temp_carry = deque()
+                while carry_forward and rem_h > 0:
+                    item = carry_forward.popleft()
+                    alloc = min(item["time_h"], rem_h)
+                    plan.append({"subject":item["subject"],"subtopic":item["subtopic"],"time_h":alloc,"time_min":round(alloc*60)})
+                    rem_h -= alloc
+                    item["time_h"] -= alloc
+                    if item["time_h"] > 0:
+                        temp_carry.append(item)
+                carry_forward = temp_carry
+
+                # Queue topics
+                while queue and rem_h > 0:
+                    item = queue.popleft()
+                    alloc = min(item["time_h"], rem_h)
+                    plan.append({"subject":item["subject"],"subtopic":item["subtopic"],"time_h":alloc,"time_min":round(alloc*60)})
+                    rem_h -= alloc
+                    item["time_h"] -= alloc
+                    if item["time_h"] > 0:
+                        carry_forward.append(item)
+
+                # Append today's plan
+                calendar.append({"date":cur_date,"day_type":"Study","plan":plan,"questions":questions_per_topic})
+
+                # Increment counters
                 cur_date += timedelta(days=1)
-                continue
+                study_day_count += 1
+                days_generated += 1
 
-            # Carry-forward topics first
-            temp_carry = deque()
-            while carry_forward and rem_h>0:
-                item = carry_forward.popleft()
-                alloc = min(item["time_h"], rem_h)
-                plan.append({"subject":item["subject"],"subtopic":item["subtopic"],"time_h":alloc,"time_min":round(alloc*60)})
-                rem_h -= alloc
-                item["time_h"] -= alloc
-                if item["time_h"]>0:
-                    temp_carry.append(item)
-            carry_forward = temp_carry
+            if queue or carry_forward:
+                st.warning(f"⚠️ {len(queue)+len(carry_forward)} topics remain unscheduled. Increase daily hours or total days.")
 
-            # Queue topics
-            while queue and rem_h>0:
-                item = queue.popleft()
-                alloc = min(item["time_h"], rem_h)
-                plan.append({"subject":item["subject"],"subtopic":item["subtopic"],"time_h":alloc,"time_min":round(alloc*60)})
-                rem_h -= alloc
-                item["time_h"] -= alloc
-                if item["time_h"]>0:
-                    carry_forward.append(item)
+            st.session_state.calendar_cache = calendar
 
-            calendar.append({"date":cur_date,"day_type":"Study","plan":plan,"questions":questions_per_topic})
-            cur_date += timedelta(days=1)
-            study_day_count += 1
-            days_generated += 1
+            # ----------------------------
+            # WEEKLY VIEW
+            # ----------------------------
+            st.header("📆 Study Calendar")
+            weeks = defaultdict(list)
+            for day in calendar:
+                weeks[day["date"].isocalendar().week].append(day)
 
-        if queue or carry_forward:
-            st.warning(f"⚠️ {len(queue)+len(carry_forward)} topics remain unscheduled. Increase daily hours or total days.")
-
-        st.session_state.calendar_cache = calendar
-
-        # ----------------------------
-        # WEEKLY VIEW
-        # ----------------------------
-        st.header("📆 Study Calendar")
-        weeks = defaultdict(list)
-        for day in calendar:
-            weeks[day["date"].isocalendar().week].append(day)
-
-        for w in sorted(weeks.keys()):
-            st.subheader(f"Week {w}")
-            for day_idx, day in enumerate(weeks[w]):
-                st.markdown(f"### {day['date'].strftime('%A, %d %b %Y')} ({day['day_type']}) | Questions: {day['questions']}")
-                day_keys = []
-                for i, s in enumerate(day["plan"]):
-                    key = f"{day['date']}_{i}_{s['subtopic']}"
-                    checked = key in st.session_state.completed_subtopics
-                    day_keys.append((key,s))
-                    col1,col2 = st.columns([1,8])
-                    with col1:
-                        ticked = st.checkbox("",value=checked,key=key)
-                    with col2:
-                        st.markdown(f"<b style='color:{subject_color.get(s['subject'],'#000')}'>{s['subject']}</b> → {s['subtopic']} ({s['time_min']} min)",unsafe_allow_html=True)
-                    if ticked:
-                        st.session_state.completed_subtopics.add(key)
-                    else:
-                        st.session_state.completed_subtopics.discard(key)
+            for w in sorted(weeks.keys()):
+                st.subheader(f"Week {w}")
+                for day_idx, day in enumerate(weeks[w]):
+                    st.markdown(f"### {day['date'].strftime('%A, %d %b %Y')} ({day['day_type']}) | Questions: {day['questions']}")
+                    day_keys = []
+                    for i, s in enumerate(day["plan"]):
+                        key = f"{day['date']}_{i}_{s['subtopic']}"
+                        checked = key in st.session_state.completed_subtopics
+                        day_keys.append((key,s))
+                        col1,col2 = st.columns([1,8])
+                        with col1:
+                            ticked = st.checkbox("",value=checked,key=key)
+                        with col2:
+                            st.markdown(f"<b style='color:{subject_color.get(s['subject'],'#000')}'>{s['subject']}</b> → {s['subtopic']} ({s['time_min']} min)",unsafe_allow_html=True)
+                        if ticked:
+                            st.session_state.completed_subtopics.add(key)
+                        else:
+                            st.session_state.completed_subtopics.discard(key)
 
 # ----------------------------
 # QUESTION PRACTICE TAB
