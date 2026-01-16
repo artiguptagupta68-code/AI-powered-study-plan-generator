@@ -30,11 +30,11 @@ if os.path.exists(STATE_FILE):
         st.session_state.completed = set(json.load(f))
 
 # -------------------------------
-# SYLLABUS FUNCTIONS
+# PDF / SYLLABUS FUNCTIONS
 # -------------------------------
 def clean_line(line):
     bad = ["annexure", "notice", "commission"]
-    return line.strip() and not any(b in line.lower() for b in bad) and len(line) < 120
+    return line.strip() and not any(b in line.lower() for b in bad) and len(line) < 200
 
 def read_pdf(source):
     if hasattr(source, "read"):  # UploadedFile
@@ -43,8 +43,8 @@ def read_pdf(source):
         doc = fitz.open(source)
 
     lines = []
-    for p in doc:
-        for l in p.get_text().split("\n"):
+    for page in doc:
+        for l in page.get_text().split("\n"):
             if clean_line(l):
                 lines.append(l.strip())
     return lines
@@ -74,21 +74,15 @@ def parse_syllabus(root):
                 if l.isupper() and l.replace(" ", "").isalpha():
                     subject = l.title()
                 elif subject:
-                    parts = [p.strip() for p in l.split(",") if len(p.strip()) > 3]
-                    data[exam][subject].extend(parts)
+                    data[exam][subject].append(l)
     return data
 
 def parse_uploaded_syllabus(files):
     data = defaultdict(list)
     for f in files:
         lines = read_pdf(f)
-        subject = None
         for l in lines:
-            if l.isupper() and l.replace(" ", "").isalpha():
-                subject = l.title()
-            elif subject:
-                parts = [p.strip() for p in l.split(",") if len(p.strip()) > 3]
-                data[subject].extend(parts)
+            data["Uploaded Syllabus"].append(l)
     return data
 
 def estimate_time_min(topic, exam=None):
@@ -99,45 +93,44 @@ def estimate_time_min(topic, exam=None):
     return int(base * weight)
 
 # -------------------------------
-# USER INPUT: EXAM & SYLLABUS
+# USER INPUT
 # -------------------------------
 st.title("📚 AI-Powered Study Planner")
 
-custom_plan = st.checkbox("Create a study plan of my choice / custom syllabus")
+custom_plan = st.checkbox("Use my own syllabus (upload PDFs)")
 
 if custom_plan:
-    exam_name = st.text_input("Enter your Exam Name")
+    exam_used = st.text_input("Enter Exam Name")
     uploaded_files = st.file_uploader(
         "Upload syllabus PDF(s)",
         type=["pdf"],
         accept_multiple_files=True
     )
     if not uploaded_files:
-        st.warning("Please upload at least one PDF.")
+        st.warning("Upload at least one PDF.")
         st.stop()
 
     syllabus_json = parse_uploaded_syllabus(uploaded_files)
-    if not syllabus_json:
-        st.error("No valid syllabus found.")
-        st.stop()
-
     subjects = list(syllabus_json.keys())
-    exam_used = exam_name
 
 else:
     exam_used = st.selectbox("Select Exam", ["NEET", "IIT JEE", "GATE"])
-    syllabus_source = st.radio("Syllabus Source", ["Use default syllabus", "Upload PDF(s)"])
+    syllabus_source = st.radio(
+        "Syllabus Source",
+        ["Use default syllabus", "Upload syllabus PDF(s)"]
+    )
 
-    if syllabus_source == "Upload PDF(s)":
+    if syllabus_source == "Upload syllabus PDF(s)":
         uploaded_files = st.file_uploader(
             "Upload syllabus PDF(s)",
             type=["pdf"],
             accept_multiple_files=True
         )
         if not uploaded_files:
-            st.warning("Please upload at least one PDF.")
+            st.warning("Upload at least one PDF.")
             st.stop()
         syllabus_json = parse_uploaded_syllabus(uploaded_files)
+
     else:
         if not os.path.exists(EXTRACT_DIR):
             if not os.path.exists(ZIP_PATH):
@@ -162,8 +155,8 @@ selected_subjects = st.multiselect("Select Subjects", subjects, default=subjects
 start_date = st.date_input("Start Date", datetime.today())
 daily_hours = st.number_input("Daily study hours", 1.0, 12.0, 6.0)
 questions_per_topic = st.number_input("Questions per topic per day", 10, 200, 30)
-revision_every_n_days = st.number_input("Revision Day Frequency (every N days)", 5, 30, 7)
-test_every_n_days = st.number_input("Test Day Frequency (every N days)", 7, 30, 14)
+revision_every_n_days = st.number_input("Revision every N days", 5, 30, 7)
+test_every_n_days = st.number_input("Test every N days", 7, 30, 14)
 
 # -------------------------------
 # BUILD QUEUE
@@ -180,37 +173,26 @@ def build_queue():
     return q
 
 # -------------------------------
-# ROUND-ROBIN ASSIGNMENT
+# DAILY ASSIGNMENT
 # -------------------------------
 def assign_daily_plan(queue, daily_min):
     plan = []
-    subjects_today = list({item["subject"] for item in queue})
-    subject_queues = {
-        s: deque([item for item in queue if item["subject"] == s])
-        for s in subjects_today
-    }
-
-    while daily_min > 0 and any(subject_queues.values()):
-        for s in subjects_today:
-            if not subject_queues[s]:
-                continue
-            item = subject_queues[s].popleft()
-            alloc = min(item["time_min"], daily_min)
-            plan.append({
-                "subject": item["subject"],
-                "topic": item["topic"],
-                "time_min": alloc
-            })
-            daily_min -= alloc
-            item["time_min"] -= alloc
-            if item["time_min"] <= 0:
-                queue.remove(item)
-            if daily_min <= 0:
-                break
+    while queue and daily_min > 0:
+        item = queue[0]
+        alloc = min(item["time_min"], daily_min)
+        plan.append({
+            "subject": item["subject"],
+            "topic": item["topic"],
+            "time_min": alloc
+        })
+        item["time_min"] -= alloc
+        daily_min -= alloc
+        if item["time_min"] <= 0:
+            queue.popleft()
     return plan
 
 # -------------------------------
-# GENERATE CALENDAR
+# CALENDAR
 # -------------------------------
 def generate_calendar(queue):
     calendar = []
@@ -251,7 +233,7 @@ if selected_subjects and not st.session_state.calendar:
     st.session_state.calendar = generate_calendar(build_queue())
 
 # -------------------------------
-# DISPLAY STUDY PLAN
+# DISPLAY
 # -------------------------------
 st.header("📆 Study Plan")
 
