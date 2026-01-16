@@ -1,59 +1,80 @@
 # app.py
 import streamlit as st
 import fitz  # PyMuPDF
+import pytesseract
+from PIL import Image
 import json
 import re
 from collections import defaultdict, deque
 from datetime import datetime, timedelta
+import io
+import os
 
+# ---------------------------
+# CONFIG
+# ---------------------------
 st.set_page_config(page_title="AI Study Planner", layout="wide")
-st.title("📚 AI Study Planner (PDF → JSON → Plan)")
+st.title("📚 AI Study Planner (Universal + Progress Tracker)")
 
-# --------------------------------------------------
-# PDF READER
-# --------------------------------------------------
-def read_pdf(uploaded_file):
-    doc = fitz.open(stream=uploaded_file.read(), filetype="pdf")
+STATE_FILE = "progress.json"
+MAX_CONTINUOUS_DAYS = 6
+
+# ---------------------------
+# SESSION STATE
+# ---------------------------
+if "completed" not in st.session_state:
+    st.session_state.completed = set()
+if "calendar" not in st.session_state:
+    st.session_state.calendar = []
+if os.path.exists(STATE_FILE):
+    with open(STATE_FILE,"r") as f:
+        st.session_state.completed = set(json.load(f))
+
+# ---------------------------
+# PDF READER (TEXT + OCR)
+# ---------------------------
+def read_pdf(file):
+    doc = fitz.open(stream=file.read(), filetype="pdf")
     lines = []
     for page in doc:
-        for line in page.get_text().split("\n"):
-            line = line.strip()
-            if len(line) > 3:
-                lines.append(line)
+        text = page.get_text()
+        if text.strip():
+            page_lines = [l.strip() for l in text.split("\n") if len(l.strip())>2]
+        else:
+            pix = page.get_pixmap()
+            img = Image.open(io.BytesIO(pix.tobytes()))
+            ocr_text = pytesseract.image_to_string(img)
+            page_lines = [l.strip() for l in ocr_text.split("\n") if len(l.strip())>2]
+        lines.extend(page_lines)
     return lines
 
-# --------------------------------------------------
+# ---------------------------
 # PDF → SYLLABUS JSON
-# --------------------------------------------------
+# ---------------------------
 def pdf_to_syllabus_json(files):
     syllabus = defaultdict(list)
     current_subject = "General"
-
     for f in files:
         lines = read_pdf(f)
         for line in lines:
-            # Detect SUBJECT (ALL CAPS, short)
-            if (
-                line.isupper()
-                and len(line.split()) <= 6
-                and re.sub(r"[^A-Z]", "", line)
-            ):
+            if line.isupper() and len(line.split()) <= 6 and re.sub(r"[^A-Z]", "", line):
                 current_subject = line.title()
             else:
                 syllabus[current_subject].append(line)
-
     return dict(syllabus)
 
-# --------------------------------------------------
+# ---------------------------
 # TIME ESTIMATION
-# --------------------------------------------------
+# ---------------------------
 def estimate_time(topic):
     words = len(topic.split())
-    return max(20, words * 3)
+    complexity = len(re.findall(r"(theorem|numerical|derivation|proof)", topic.lower()))
+    base = max(15, words*3 + complexity*10)
+    return base
 
-# --------------------------------------------------
-# BUILD STUDY QUEUE
-# --------------------------------------------------
+# ---------------------------
+# BUILD QUEUE
+# ---------------------------
 def build_queue(syllabus_json, selected_subjects):
     q = deque()
     for subject in selected_subjects:
@@ -65,117 +86,130 @@ def build_queue(syllabus_json, selected_subjects):
             })
     return q
 
-# --------------------------------------------------
-# GENERATE STUDY CALENDAR
-# --------------------------------------------------
-def generate_calendar(queue, start_date, daily_hours):
-    calendar = []
-    cur_date = datetime.combine(start_date, datetime.min.time())
-    daily_minutes = int(daily_hours * 60)
+# ---------------------------
+# ASSIGN DAILY PLAN
+# ---------------------------
+def assign_daily_plan(queue, daily_min):
+    plan=[]
+    subjects_today=list({item["subject"] for item in queue})
+    if not subjects_today: return plan
+    subject_queues={s:deque([item for item in queue if item["subject"]==s]) for s in subjects_today}
+    while daily_min>0 and any(subject_queues.values()):
+        for s in subjects_today:
+            if not subject_queues[s]: continue
+            item=subject_queues[s].popleft()
+            alloc=min(item["time"],daily_min)
+            plan.append({"subject":item["subject"],"topic":item["topic"],"minutes":alloc})
+            daily_min-=alloc
+            item["time"]-=alloc
+            if item["time"]<=0:
+                for idx,q_item in enumerate(queue):
+                    if q_item["subject"]==item["subject"] and q_item["topic"]==item["topic"]:
+                        del queue[idx]
+                        break
+            if daily_min<=0: break
+    return plan
 
+# ---------------------------
+# GENERATE CALENDAR WITH REVISION & TEST DAYS
+# ---------------------------
+def generate_calendar(queue, start_date, daily_hours, revision_every_n_days=7, test_every_n_days=14):
+    calendar=[]
+    streak=0
+    day_count=0
+    cur_date=datetime.combine(start_date, datetime.min.time())
+    daily_min=int(daily_hours*60)
     while queue:
-        remaining = daily_minutes
-        day_plan = []
-
-        while queue and remaining > 0:
-            item = queue[0]
-            alloc = min(item["time"], remaining)
-            day_plan.append({
-                "subject": item["subject"],
-                "topic": item["topic"],
-                "minutes": alloc
-            })
-            item["time"] -= alloc
-            remaining -= alloc
-            if item["time"] <= 0:
-                queue.popleft()
-
-        calendar.append({
-            "date": cur_date,
-            "plan": day_plan
-        })
+        day_type="STUDY"
+        plan=assign_daily_plan(queue,daily_min)
+        if streak>=MAX_CONTINUOUS_DAYS:
+            day_type="FREE"
+            plan=[{"subject":"FREE","topic":"Rest / light revision","minutes":0}]
+            streak=0
+        elif day_count%revision_every_n_days==0 and day_count!=0:
+            day_type="REVISION"
+            plan=[{"subject":"REVISION","topic":"Revise Completed Topics","minutes":daily_min}]
+        elif day_count%test_every_n_days==0 and day_count!=0:
+            day_type="TEST"
+            plan=[{"subject":"TEST","topic":"Test Completed Topics","minutes":daily_min}]
+        calendar.append({"date":cur_date,"plan":plan,"type":day_type})
+        streak += 1 if day_type=="STUDY" else 0
+        day_count += 1
         cur_date += timedelta(days=1)
-
     return calendar
 
-# --------------------------------------------------
-# UI STEP 1: UPLOAD PDF
-# --------------------------------------------------
-uploaded_files = st.file_uploader(
-    "📤 Upload syllabus PDF(s)",
-    type=["pdf"],
-    accept_multiple_files=True
-)
-
+# ---------------------------
+# STEP 1: UPLOAD PDF
+# ---------------------------
+uploaded_files = st.file_uploader("📤 Upload syllabus PDF(s)", type=["pdf"], accept_multiple_files=True)
 if not uploaded_files:
-    st.info("Upload syllabus PDF(s) to begin.")
+    st.info("Upload at least one PDF to continue.")
     st.stop()
 
-# --------------------------------------------------
-# STEP 2: CONVERT TO JSON
-# --------------------------------------------------
+# ---------------------------
+# STEP 2: PDF → JSON
+# ---------------------------
 syllabus_json = pdf_to_syllabus_json(uploaded_files)
+if not any(syllabus_json.values()):
+    st.error("❌ No readable content found in PDFs.")
+    st.stop()
 
 st.subheader("📌 Extracted Syllabus (Editable JSON)")
 json_text = st.text_area(
-    "Review / edit syllabus JSON",
-    json.dumps(syllabus_json, indent=2, ensure_ascii=False),
+    "Edit subjects/topics if needed",
+    value=json.dumps(syllabus_json, indent=2, ensure_ascii=False),
     height=400
 )
-
 try:
     syllabus_json = json.loads(json_text)
-except json.JSONDecodeError:
-    st.error("❌ Invalid JSON. Fix it before proceeding.")
+except:
+    st.error("Invalid JSON")
     st.stop()
 
-# --------------------------------------------------
-# STEP 3: CONFIRM
-# --------------------------------------------------
-confirm = st.checkbox("✅ I confirm this syllabus is correct")
-
+confirm = st.checkbox("✅ Confirm syllabus")
 if not confirm:
-    st.warning("Please confirm the syllabus to continue.")
+    st.warning("Confirm the syllabus to continue.")
     st.stop()
 
-st.success("Syllabus confirmed 🎉")
-
-# --------------------------------------------------
-# STEP 4: STUDY PLAN SETTINGS
-# --------------------------------------------------
+# ---------------------------
+# STEP 3: STUDY PLAN SETTINGS
+# ---------------------------
 subjects = list(syllabus_json.keys())
-
-selected_subjects = st.multiselect(
-    "Select subjects to study",
-    subjects,
-    default=subjects
-)
-
+selected_subjects = st.multiselect("Select subjects to study", subjects, default=subjects)
 start_date = st.date_input("Start date", datetime.today())
 daily_hours = st.number_input("Daily study hours", 1.0, 12.0, 6.0)
+revision_every_n_days = st.number_input("Revision every N days", 5, 30, 7)
+test_every_n_days = st.number_input("Test every N days", 7, 30, 14)
 
-# --------------------------------------------------
-# STEP 5: GENERATE PLAN
-# --------------------------------------------------
+# ---------------------------
+# STEP 4: GENERATE CALENDAR
+# ---------------------------
 if st.button("🚀 Generate Study Plan"):
     queue = build_queue(syllabus_json, selected_subjects)
-    calendar = generate_calendar(queue, start_date, daily_hours)
+    st.session_state.calendar = generate_calendar(queue, start_date, daily_hours, revision_every_n_days, test_every_n_days)
+    st.success("✅ Study plan generated!")
 
-    st.subheader("📆 Your Study Plan")
+# ---------------------------
+# STEP 5: SHOW STUDY PLAN WITH PROGRESS TRACKER
+# ---------------------------
+if st.session_state.calendar:
+    st.subheader("📆 Weekly Study Plan")
+    COLORS = ["#4CAF50","#2196F3","#FF9800","#9C27B0","#009688","#E91E63"]
 
-    for day in calendar:
-        st.markdown(f"### {day['date'].strftime('%A, %d %b %Y')}")
-        for p in day["plan"]:
-            st.markdown(
-                f"- **{p['subject']}** → {p['topic']} "
-                f"({p['minutes']} min)"
-            )
+    for day in st.session_state.calendar:
+        day_label = day['date'].strftime("%A, %d %b %Y")
+        st.markdown(f"### {day_label} ({day['type']} DAY)")
+        for idx, p in enumerate(day["plan"]):
+            key = f"{day_label}_{idx}_{p['topic']}"
+            checked = key in st.session_state.completed
+            label = f"**{p['subject']} → {p['topic']}** ({p['minutes']} min)"
+            if st.checkbox(label, key=key, value=checked):
+                st.session_state.completed.add(key)
+            else:
+                st.session_state.completed.discard(key)
 
-    st.success("✅ Study plan generated successfully!")
-
-    st.download_button(
-        "⬇️ Download Study Plan JSON",
-        data=json.dumps(calendar, default=str, indent=2),
-        file_name="study_plan.json",
-        mime="application/json"
-    )
+# ---------------------------
+# STEP 6: SAVE PROGRESS
+# ---------------------------
+with open(STATE_FILE,"w") as f:
+    json.dump(list(st.session_state.completed),f)
