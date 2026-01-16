@@ -30,49 +30,57 @@ if os.path.exists(STATE_FILE):
         st.session_state.completed = set(json.load(f))
 
 # -------------------------------
-# SYLLABUS FUNCTIONS
+# PDF SYLLABUS PARSING
 # -------------------------------
 def clean_line(line):
     bad = ["annexure","notice","commission"]
-    return line.strip() and not any(b in line.lower() for b in bad) and len(line)<200
+    return line.strip() and not any(b in line.lower() for b in bad) and len(line)<250
 
 def read_pdf(file):
-    """Read PDF from path or uploaded file"""
-    doc = fitz.open(file)
+    if isinstance(file, str):
+        doc = fitz.open(file)
+    else:
+        doc = fitz.open(stream=file.read(), filetype="pdf")
     lines=[]
-    for page in doc:
-        lines.extend([l.strip() for l in page.get_text().split("\n") if clean_line(l)])
+    for p in doc:
+        for l in p.get_text().split("\n"):
+            if clean_line(l):
+                lines.append(l.strip())
     return lines
 
-def parse_uploaded_syllabus(files):
-    """
-    Parse uploaded syllabus PDFs into JSON: subjects -> topics -> subtopics
-    """
+def parse_uploaded_syllabus_hierarchy(files):
+    """Parse PDFs into hierarchical JSON: subject -> topic -> subtopic"""
     syllabus = defaultdict(lambda: defaultdict(list))
-    
     for f in files:
         lines = read_pdf(f)
         current_subject = None
         current_topic = None
-        
-        for line in lines:
-            # Detect subject
-            if ("engineering" in line.lower() or line.isupper()) and len(line.split()) <= 5:
-                current_subject = line.title()
+        for l in lines:
+            # Subject detection: uppercase line <=5 words
+            if l.isupper() and len(l.split()) <= 5:
+                current_subject = l.title()
                 current_topic = None
-                continue
-            # Detect topic
-            if line.endswith(":") or (len(line.split()) <= 8 and not line.isupper()):
-                current_topic = line.rstrip(":").strip()
-                continue
-            # Subtopics
-            if current_subject and current_topic:
-                subtopics = re.split(r",|;|–|•", line)
-                subtopics = [s.strip() for s in subtopics if s.strip()]
-                syllabus[current_subject][current_topic].extend(subtopics)
-                
-    return {subj: dict(topics) for subj, topics in syllabus.items()}
+            # Topic detection: lines ending with colon, Part, Section
+            elif re.search(r"(:|Part|Section)", l, re.I):
+                parts = re.split(r"[:\-–]", l, maxsplit=1)
+                current_topic = parts[0].strip()
+                subtopic = parts[1].strip() if len(parts) > 1 else ""
+                if current_subject and current_topic:
+                    if subtopic:
+                        syllabus[current_subject][current_topic].append(subtopic)
+                    else:
+                        syllabus[current_subject][current_topic] = []
+            # Lines under current topic are subtopics
+            elif current_subject and current_topic:
+                syllabus[current_subject][current_topic].append(l.strip())
+            # Lines under subject but no topic yet
+            elif current_subject:
+                syllabus[current_subject]["General"].append(l.strip())
+    return syllabus
 
+# -------------------------------
+# TIME ESTIMATION
+# -------------------------------
 def estimate_time_min(topic, exam=None):
     words = len(topic.split())
     complexity = len(re.findall(r"(theorem|numerical|derivation|proof)", topic.lower()))
@@ -81,11 +89,11 @@ def estimate_time_min(topic, exam=None):
     return int(base*weight)
 
 # -------------------------------
-# USER INPUT: EXAM & SYLLABUS
+# USER INPUT: EXAM / SYLLABUS
 # -------------------------------
 st.title("📚 AI-Powered Study Planner")
 
-custom_plan = st.checkbox("Create a study plan of my choice / custom syllabus", key="custom_plan")
+custom_plan = st.checkbox("Create custom study plan / upload syllabus", key="custom_plan")
 
 if custom_plan:
     exam_name = st.text_input("Enter your Exam Name", key="custom_exam")
@@ -95,42 +103,34 @@ if custom_plan:
         accept_multiple_files=True
     )
     if not uploaded_files:
-        st.warning("Please upload at least one PDF to create custom syllabus.")
+        st.warning("Please upload at least one PDF to create syllabus.")
         st.stop()
-    syllabus_json = parse_uploaded_syllabus(uploaded_files)
+    syllabus_json = parse_uploaded_syllabus_hierarchy(uploaded_files)
     if not syllabus_json:
-        st.error("No valid topics found in uploaded PDFs.")
+        st.error("No topics found in uploaded PDFs.")
         st.stop()
     subjects = list(syllabus_json.keys())
 else:
     exam = st.selectbox("Select Exam", ["NEET","IIT JEE","GATE"], key="exam_select")
     syllabus_source = st.radio("Syllabus Source", ["Use default syllabus", "Upload PDF(s)"], key="syllabus_source")
     syllabus_root = EXTRACT_DIR
-    
-    # Upload custom PDFs for standard exams
     if syllabus_source=="Upload PDF(s)":
         uploaded_files = st.file_uploader(f"Upload syllabus PDFs for {exam}", type=["pdf"], accept_multiple_files=True)
         if uploaded_files:
-            syllabus_json = parse_uploaded_syllabus(uploaded_files)
-            if not syllabus_json:
-                st.error("No valid topics found in uploaded PDFs.")
-                st.stop()
+            os.makedirs(syllabus_root, exist_ok=True)
+            for f in uploaded_files:
+                with open(os.path.join(syllabus_root,f.name),"wb") as out:
+                    out.write(f.read())
+            st.success(f"{len(uploaded_files)} files uploaded successfully")
+            syllabus_json = parse_uploaded_syllabus_hierarchy(uploaded_files)
             subjects = list(syllabus_json.keys())
-        else:
-            st.warning("Upload at least one PDF or use default syllabus.")
-            st.stop()
-    else:
-        # Use default syllabus from Drive zip
-        if not os.path.exists(syllabus_root):
-            if not os.path.exists(ZIP_PATH):
-                gdown.download(f"https://drive.google.com/uc?id={DRIVE_FILE_ID}", ZIP_PATH, quiet=True)
-            with zipfile.ZipFile(ZIP_PATH) as z:
-                z.extractall(EXTRACT_DIR)
-        syllabus = parse_uploaded_syllabus([os.path.join(EXTRACT_DIR,f) for f in os.listdir(EXTRACT_DIR) if f.endswith(".pdf")])
-        if not syllabus or exam not in syllabus:
-            st.error(f"No syllabus found for {exam}.")
-            st.stop()
-        syllabus_json = syllabus[exam]
+    if syllabus_source=="Use default syllabus" and not os.path.exists(syllabus_root):
+        if not os.path.exists(ZIP_PATH):
+            gdown.download(f"https://drive.google.com/uc?id={DRIVE_FILE_ID}", ZIP_PATH, quiet=True)
+        with zipfile.ZipFile(ZIP_PATH) as z:
+            z.extractall(EXTRACT_DIR)
+        syllabus = parse_uploaded_syllabus_hierarchy([os.path.join(EXTRACT_DIR,f) for f in os.listdir(EXTRACT_DIR) if f.endswith(".pdf")])
+        syllabus_json = syllabus.get(exam, {})
         subjects = list(syllabus_json.keys())
 
 selected_subjects = st.multiselect("Select Subjects", subjects, default=subjects)
@@ -147,9 +147,10 @@ test_every_n_days = st.number_input("Test Day Frequency (every N days)",7,30,14,
 def build_queue():
     q=deque()
     for s in selected_subjects:
-        for topic, subtopics in syllabus_json[s].items():
-            for subtopic in subtopics:
-                q.append({"subject":s,"topic":topic+" → "+subtopic,"time_min":estimate_time_min(subtopic, exam_name if custom_plan else exam)})
+        for topic in syllabus_json[s]:
+            for subtopic in syllabus_json[s][topic]:
+                full_topic = f"{topic}: {subtopic}" if subtopic else topic
+                q.append({"subject": s, "topic": full_topic, "time_min": estimate_time_min(full_topic, exam_name if custom_plan else exam)})
     return q
 
 # -------------------------------
