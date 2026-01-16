@@ -1,26 +1,32 @@
 # app.py
 import streamlit as st
-import os, zipfile, gdown, fitz, json, re, io
-from collections import deque, defaultdict
-from datetime import datetime, timedelta
+import fitz  # PyMuPDF
 from PIL import Image
-import pytesseract
+import json, re, io, os
+from collections import defaultdict, deque
+from datetime import datetime, timedelta
 
-# -------------------------------
+# Optional OCR
+try:
+    import pytesseract
+    OCR_AVAILABLE = True
+except ImportError:
+    OCR_AVAILABLE = False
+
+# ---------------------------
 # CONFIG
-# -------------------------------
-DRIVE_FILE_ID = "1S6fcsuq9KvICTsOBOdp6_WN9FhzruixM"
-ZIP_PATH = "plan.zip"
-EXTRACT_DIR = "syllabus_data"
-STATE_FILE = "progress.json"
-MAX_CONTINUOUS_DAYS = 6
-
+# ---------------------------
 st.set_page_config(page_title="📚 AI Study Planner", layout="wide")
 st.title("📚 AI Study Planner (Junior Engineer Edition)")
 
-# -------------------------------
+STATE_FILE = "progress.json"
+MAX_CONTINUOUS_DAYS = 6
+ZIP_PATH = "plan.zip"
+EXTRACT_DIR = "syllabus_data"
+
+# ---------------------------
 # SESSION STATE
-# -------------------------------
+# ---------------------------
 if "completed" not in st.session_state:
     st.session_state.completed = set()
 if "calendar" not in st.session_state:
@@ -32,18 +38,13 @@ if os.path.exists(STATE_FILE):
     with open(STATE_FILE,"r") as f:
         st.session_state.completed = set(json.load(f))
 
-# -------------------------------
-# PDF READER (TEXT + OCR)
-# -------------------------------
+# ---------------------------
+# PDF READER (TEXT + optional OCR)
+# ---------------------------
 def read_pdf(file_or_path):
-    """
-    file_or_path can be:
-    - Streamlit uploaded file: file-like object with read()
-    - Local path string
-    """
     if isinstance(file_or_path, str):
         doc = fitz.open(file_or_path)
-    else:  # Uploaded file
+    else:
         doc = fitz.open(stream=file_or_path.read(), filetype="pdf")
 
     lines = []
@@ -51,36 +52,36 @@ def read_pdf(file_or_path):
         text = page.get_text()
         if text.strip():
             page_lines = [l.strip() for l in text.split("\n") if len(l.strip()) > 2]
-        else:
+            lines.extend(page_lines)
+        elif OCR_AVAILABLE:
+            # OCR fallback only if pytesseract is installed
             pix = page.get_pixmap()
             img = Image.open(io.BytesIO(pix.tobytes()))
             ocr_text = pytesseract.image_to_string(img)
             page_lines = [l.strip() for l in ocr_text.split("\n") if len(l.strip()) > 2]
-        lines.extend(page_lines)
+            lines.extend(page_lines)
     return lines
 
-# -------------------------------
+# ---------------------------
 # PDF → SYLLABUS JSON
-# -------------------------------
-def parse_uploaded_syllabus(files):
-    """Parse uploaded PDFs into JSON: subjects -> topics -> subtopics"""
+# ---------------------------
+def pdf_to_syllabus_json(files):
     syllabus = defaultdict(lambda: defaultdict(list))
-    current_subject = None
-    current_topic = None
     for f in files:
         lines = read_pdf(f)
+        current_subject = None
+        current_topic = None
         for line in lines:
             line = line.strip()
-            if not line:
-                continue
-            # Subject detection (ALL CAPS)
+            if not line: continue
+            # Detect Subject (ALL CAPS)
             if line.isupper() and len(line.split()) <= 6 and re.sub(r"[^A-Z]", "", line):
                 current_subject = line.title()
                 current_topic = None
-            # Topic detection (Capitalized)
+            # Detect Topic (Capitalized)
             elif line[0].isupper() and len(line.split()) <= 10:
                 current_topic = line
-            # Otherwise, subtopic
+            # Otherwise subtopic
             else:
                 if current_subject and current_topic:
                     syllabus[current_subject][current_topic].append(line)
@@ -90,54 +91,18 @@ def parse_uploaded_syllabus(files):
                     syllabus["General"]["General"].append(line)
     return dict(syllabus)
 
-# -------------------------------
-# DEFAULT SYLLABUS PARSER
-# -------------------------------
-def clean_line(line):
-    bad = ["annexure","notice","commission"]
-    return line.strip() and not any(b in line.lower() for b in bad) and len(line)<120
-
-def parse_syllabus(root):
-    data = defaultdict(lambda: defaultdict(list))
-    for r,_,files in os.walk(root):
-        for f in files:
-            if not f.endswith(".pdf"): continue
-            lines = read_pdf(os.path.join(r,f))
-            subject = None
-            for l in lines:
-                if l.isupper() and l.replace(" ","").isalpha():
-                    subject = l.title()
-                elif subject:
-                    parts = [p.strip() for p in l.split(",") if len(p.strip())>3]
-                    data[subject]["General"].extend(parts)
-    return dict(data)
-
-# -------------------------------
-# NORMALIZE SYLLABUS
-# -------------------------------
-def normalize_syllabus(syllabus_json):
-    normalized = {}
-    for subject, topics in syllabus_json.items():
-        if isinstance(topics, list):
-            normalized[subject] = {t:[t] for t in topics}
-        elif isinstance(topics, dict):
-            normalized[subject] = {t:(v if isinstance(v,list) else [v]) for t,v in topics.items()}
-        else:
-            normalized[subject] = {"General":[str(topics)]}
-    return normalized
-
-# -------------------------------
-# ESTIMATE TIME
-# -------------------------------
+# ---------------------------
+# TIME ESTIMATION
+# ---------------------------
 def estimate_time(text):
     words = len(text.split())
     complexity = len(re.findall(r"(theorem|numerical|derivation|proof)", text.lower()))
     base = max(15, words*3 + complexity*10)
     return base
 
-# -------------------------------
+# ---------------------------
 # BUILD QUEUE
-# -------------------------------
+# ---------------------------
 def build_queue(syllabus_json, selected_subjects):
     q = deque()
     for subject in selected_subjects:
@@ -151,9 +116,9 @@ def build_queue(syllabus_json, selected_subjects):
                 })
     return q
 
-# -------------------------------
+# ---------------------------
 # ASSIGN DAILY PLAN
-# -------------------------------
+# ---------------------------
 def assign_daily_plan(queue, daily_min):
     plan=[]
     subjects_today=list({item["subject"] for item in queue})
@@ -172,12 +137,13 @@ def assign_daily_plan(queue, daily_min):
                     if q_item==item:
                         del queue[idx]
                         break
-            if daily_min<=0: break
+            if daily_min<=0:
+                break
     return plan
 
-# -------------------------------
+# ---------------------------
 # GENERATE CALENDAR
-# -------------------------------
+# ---------------------------
 def generate_calendar(queue, start_date, daily_hours, revision_every_n_days=7, test_every_n_days=14):
     calendar=[]
     streak=0
@@ -203,58 +169,65 @@ def generate_calendar(queue, start_date, daily_hours, revision_every_n_days=7, t
         cur_date += timedelta(days=1)
     return calendar
 
-# -------------------------------
-# UPLOAD OR DEFAULT SYLLABUS
-# -------------------------------
-custom_plan = st.checkbox("Create custom study plan")
+# ---------------------------
+# STEP 1: UPLOAD PDF or USE DEFAULT
+# ---------------------------
+custom_plan = st.checkbox("Create custom syllabus / upload PDF(s)")
+
+syllabus_json = {}
 if custom_plan:
-    exam_name = st.text_input("Enter Exam Name", value="Junior Engineer")
+    exam_name = st.text_input("Enter your Exam Name", key="custom_exam")
     uploaded_files = st.file_uploader(f"Upload syllabus PDF(s) for {exam_name}", type=["pdf"], accept_multiple_files=True)
-    if not uploaded_files:
-        st.warning("Upload at least one PDF")
-        st.stop()
-    syllabus_json = parse_uploaded_syllabus(uploaded_files)
+    if uploaded_files:
+        syllabus_json = pdf_to_syllabus_json(uploaded_files)
 else:
-    syllabus_source = st.radio("Syllabus Source", ["Use default syllabus folder", "Upload PDFs"])
-    if syllabus_source=="Upload PDFs":
-        uploaded_files = st.file_uploader("Upload syllabus PDFs", type=["pdf"], accept_multiple_files=True)
-        if not uploaded_files:
-            st.warning("Upload at least one PDF")
-            st.stop()
-        syllabus_json = parse_uploaded_syllabus(uploaded_files)
-    else:
-        if not os.path.exists(EXTRACT_DIR):
-            if not os.path.exists(ZIP_PATH):
-                gdown.download(f"https://drive.google.com/uc?id={DRIVE_FILE_ID}", ZIP_PATH, quiet=True)
-            with zipfile.ZipFile(ZIP_PATH) as z:
-                z.extractall(EXTRACT_DIR)
-        syllabus_json = parse_syllabus(EXTRACT_DIR)
+    # Optional: load default syllabus PDFs from EXTRACT_DIR
+    if not os.path.exists(EXTRACT_DIR):
+        os.makedirs(EXTRACT_DIR)
+    files = [os.path.join(EXTRACT_DIR, f) for f in os.listdir(EXTRACT_DIR) if f.endswith(".pdf")]
+    if files:
+        syllabus_json = pdf_to_syllabus_json(files)
 
-# Normalize for queue building
-syllabus_json = normalize_syllabus(syllabus_json)
+if not syllabus_json:
+    st.error("❌ No syllabus found. Upload at least one PDF.")
+    st.stop()
 
-# -------------------------------
-# SELECT SUBJECTS
-# -------------------------------
+# Confirm / edit syllabus
+st.subheader("📌 Extracted Syllabus (JSON)")
+json_text = st.text_area("Edit subjects/topics/subtopics if needed",
+                         value=json.dumps(syllabus_json, indent=2, ensure_ascii=False), height=400)
+try:
+    syllabus_json = json.loads(json_text)
+except:
+    st.error("Invalid JSON")
+    st.stop()
+
+confirm = st.checkbox("✅ Confirm syllabus")
+if not confirm:
+    st.warning("Confirm the syllabus to continue.")
+    st.stop()
+
+# ---------------------------
+# STEP 2: STUDY PLAN SETTINGS
+# ---------------------------
 subjects = list(syllabus_json.keys())
 selected_subjects = st.multiselect("Select subjects to study", subjects, default=subjects)
-
 start_date = st.date_input("Start Date", datetime.today())
 daily_hours = st.number_input("Daily study hours",1.0,12.0,6.0)
-revision_every_n_days = st.number_input("Revision Day Frequency",5,30,7)
-test_every_n_days = st.number_input("Test Day Frequency",7,30,14)
+revision_every_n_days = st.number_input("Revision every N days",5,30,7)
+test_every_n_days = st.number_input("Test every N days",7,30,14)
 
-# -------------------------------
-# GENERATE STUDY PLAN
-# -------------------------------
+# ---------------------------
+# STEP 3: GENERATE CALENDAR
+# ---------------------------
 if st.button("🚀 Generate Study Plan"):
     queue = build_queue(syllabus_json, selected_subjects)
     st.session_state.calendar = generate_calendar(queue, start_date, daily_hours, revision_every_n_days, test_every_n_days)
     st.success("✅ Study plan generated!")
 
-# -------------------------------
-# DISPLAY PLAN + DAY COMPLETED
-# -------------------------------
+# ---------------------------
+# STEP 4: DISPLAY PLAN + DAY COMPLETED
+# ---------------------------
 if st.session_state.calendar:
     st.subheader("📆 Weekly Study Plan")
     for day_idx, day in enumerate(st.session_state.calendar):
@@ -262,7 +235,7 @@ if st.session_state.calendar:
         st.markdown(f"### {day_label} ({day['type']} DAY)")
         unfinished_today = []
         for idx, p in enumerate(day["plan"]):
-            subtopic = p.get("subtopic", p.get("topic",""))
+            subtopic = p.get("subtopic", p.get("topic", ""))
             key = f"{day_label}_{idx}_{subtopic}"
             checked = key in st.session_state.completed
             label = f"**{p['subject']} → {p.get('topic','')} → {subtopic}** ({p.get('minutes',0)} min)"
@@ -283,8 +256,8 @@ if st.session_state.calendar:
                     st.session_state.calendar.append({"date":next_date,"plan":[],"type":"STUDY"})
                 st.session_state.calendar[next_idx]["plan"] = unfinished_today + st.session_state.calendar[next_idx]["plan"]
 
-# -------------------------------
-# SAVE PROGRESS
-# -------------------------------
+# ---------------------------
+# STEP 5: SAVE PROGRESS
+# ---------------------------
 with open(STATE_FILE,"w") as f:
     json.dump(list(st.session_state.completed), f)
