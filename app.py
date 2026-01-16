@@ -8,7 +8,6 @@ import re
 from collections import defaultdict, deque
 from datetime import datetime, timedelta
 import io
-import os
 
 # ---------------------------
 # CONFIG
@@ -49,7 +48,7 @@ def read_pdf(file):
     return lines
 
 # ---------------------------
-# PDF → SYLLABUS JSON (subject -> topic -> subtopic)
+# PDF → SYLLABUS JSON
 # ---------------------------
 def pdf_to_syllabus_json(files):
     syllabus = defaultdict(lambda: defaultdict(list))
@@ -66,7 +65,7 @@ def pdf_to_syllabus_json(files):
             if line.isupper() and len(line.split()) <= 6 and re.sub(r"[^A-Z]", "", line):
                 current_subject = line.title()
                 current_topic = None
-            # Topic detection (CAPITALIZED)
+            # Topic detection (Capitalized)
             elif line[0].isupper() and len(line.split()) <= 10:
                 current_topic = line
             # Otherwise, subtopic
@@ -121,7 +120,6 @@ def assign_daily_plan(queue, daily_min):
             daily_min -= alloc
             item["time"] -= alloc
             if item["time"] <= 0:
-                # Remove from queue
                 for idx,q_item in enumerate(queue):
                     if q_item==item:
                         del queue[idx]
@@ -131,7 +129,7 @@ def assign_daily_plan(queue, daily_min):
     return plan
 
 # ---------------------------
-# GENERATE CALENDAR WITH REVISION & TEST
+# GENERATE CALENDAR
 # ---------------------------
 def generate_calendar(queue, start_date, daily_hours, revision_every_n_days=7, test_every_n_days=14):
     calendar=[]
@@ -219,15 +217,16 @@ if st.session_state.calendar:
         st.markdown(f"### {day_label} ({day['type']} DAY)")
         unfinished_today = []
         for idx, p in enumerate(day["plan"]):
-            key = f"{day_label}_{idx}_{p['subtopic']}"
+            subtopic = p.get("subtopic", p.get("topic", ""))
+            key = f"{day_label}_{idx}_{subtopic}"
             checked = key in st.session_state.completed
-            label = f"**{p['subject']} → {p['topic']} → {p['subtopic']}** ({p['minutes']} min)"
+            label = f"**{p['subject']} → {p.get('topic','')} → {subtopic}** ({p.get('minutes',0)} min)"
             if st.checkbox(label, key=key, value=checked):
                 st.session_state.completed.add(key)
             else:
                 st.session_state.completed.discard(key)
-                unfinished_today.append(p)
-        # Day Completed Button
+                if p.get("subject") not in ["REVISION","TEST","FREE"]:
+                    unfinished_today.append(p)
         if st.button(f"Mark Day Completed ({day_label})", key=f"complete_day_{day_idx}"):
             if not unfinished_today:
                 st.success("🎉 All subtopics completed for this day!")
