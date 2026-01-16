@@ -6,5 +6,6 @@ pandas
 fitz
 PyMuPDF
 requests
-
+pytesseract
+pillow
 
