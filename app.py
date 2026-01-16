@@ -14,7 +14,7 @@ import os
 # CONFIG
 # ---------------------------
 st.set_page_config(page_title="AI Study Planner", layout="wide")
-st.title("📚 AI Study Planner (Universal + Progress Tracker)")
+st.title("📚 AI Study Planner (Junior Engineer Edition)")
 
 STATE_FILE = "progress.json"
 MAX_CONTINUOUS_DAYS = 6
@@ -49,26 +49,42 @@ def read_pdf(file):
     return lines
 
 # ---------------------------
-# PDF → SYLLABUS JSON
+# PDF → SYLLABUS JSON (subject -> topic -> subtopic)
 # ---------------------------
 def pdf_to_syllabus_json(files):
-    syllabus = defaultdict(list)
-    current_subject = "General"
+    syllabus = defaultdict(lambda: defaultdict(list))
+    current_subject = None
+    current_topic = None
+
     for f in files:
         lines = read_pdf(f)
         for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            # Subject detection (ALL CAPS)
             if line.isupper() and len(line.split()) <= 6 and re.sub(r"[^A-Z]", "", line):
                 current_subject = line.title()
+                current_topic = None
+            # Topic detection (CAPITALIZED)
+            elif line[0].isupper() and len(line.split()) <= 10:
+                current_topic = line
+            # Otherwise, subtopic
             else:
-                syllabus[current_subject].append(line)
+                if current_subject and current_topic:
+                    syllabus[current_subject][current_topic].append(line)
+                elif current_subject:
+                    syllabus[current_subject]["General"].append(line)
+                else:
+                    syllabus["General"]["General"].append(line)
     return dict(syllabus)
 
 # ---------------------------
-# TIME ESTIMATION
+# ESTIMATE TIME
 # ---------------------------
-def estimate_time(topic):
-    words = len(topic.split())
-    complexity = len(re.findall(r"(theorem|numerical|derivation|proof)", topic.lower()))
+def estimate_time(text):
+    words = len(text.split())
+    complexity = len(re.findall(r"(theorem|numerical|derivation|proof)", text.lower()))
     base = max(15, words*3 + complexity*10)
     return base
 
@@ -78,12 +94,14 @@ def estimate_time(topic):
 def build_queue(syllabus_json, selected_subjects):
     q = deque()
     for subject in selected_subjects:
-        for topic in syllabus_json[subject]:
-            q.append({
-                "subject": subject,
-                "topic": topic,
-                "time": estimate_time(topic)
-            })
+        for topic, subtopics in syllabus_json[subject].items():
+            for subtopic in subtopics:
+                q.append({
+                    "subject": subject,
+                    "topic": topic,
+                    "subtopic": subtopic,
+                    "time": estimate_time(subtopic)
+                })
     return q
 
 # ---------------------------
@@ -98,20 +116,22 @@ def assign_daily_plan(queue, daily_min):
         for s in subjects_today:
             if not subject_queues[s]: continue
             item=subject_queues[s].popleft()
-            alloc=min(item["time"],daily_min)
-            plan.append({"subject":item["subject"],"topic":item["topic"],"minutes":alloc})
-            daily_min-=alloc
-            item["time"]-=alloc
-            if item["time"]<=0:
+            alloc=min(item["time"], daily_min)
+            plan.append({"subject":item["subject"], "topic":item["topic"], "subtopic":item["subtopic"], "minutes":alloc})
+            daily_min -= alloc
+            item["time"] -= alloc
+            if item["time"] <= 0:
+                # Remove from queue
                 for idx,q_item in enumerate(queue):
-                    if q_item["subject"]==item["subject"] and q_item["topic"]==item["topic"]:
+                    if q_item==item:
                         del queue[idx]
                         break
-            if daily_min<=0: break
+            if daily_min<=0:
+                break
     return plan
 
 # ---------------------------
-# GENERATE CALENDAR WITH REVISION & TEST DAYS
+# GENERATE CALENDAR WITH REVISION & TEST
 # ---------------------------
 def generate_calendar(queue, start_date, daily_hours, revision_every_n_days=7, test_every_n_days=14):
     calendar=[]
@@ -121,17 +141,17 @@ def generate_calendar(queue, start_date, daily_hours, revision_every_n_days=7, t
     daily_min=int(daily_hours*60)
     while queue:
         day_type="STUDY"
-        plan=assign_daily_plan(queue,daily_min)
+        plan=assign_daily_plan(queue, daily_min)
         if streak>=MAX_CONTINUOUS_DAYS:
             day_type="FREE"
-            plan=[{"subject":"FREE","topic":"Rest / light revision","minutes":0}]
+            plan=[{"subject":"FREE","topic":"Rest","subtopic":"Relax / Light revision","minutes":0}]
             streak=0
         elif day_count%revision_every_n_days==0 and day_count!=0:
             day_type="REVISION"
-            plan=[{"subject":"REVISION","topic":"Revise Completed Topics","minutes":daily_min}]
+            plan=[{"subject":"REVISION","topic":"Revise Completed","subtopic":"All completed topics", "minutes":daily_min}]
         elif day_count%test_every_n_days==0 and day_count!=0:
             day_type="TEST"
-            plan=[{"subject":"TEST","topic":"Test Completed Topics","minutes":daily_min}]
+            plan=[{"subject":"TEST","topic":"Test Completed","subtopic":"All completed topics", "minutes":daily_min}]
         calendar.append({"date":cur_date,"plan":plan,"type":day_type})
         streak += 1 if day_type=="STUDY" else 0
         day_count += 1
@@ -156,7 +176,7 @@ if not any(syllabus_json.values()):
 
 st.subheader("📌 Extracted Syllabus (Editable JSON)")
 json_text = st.text_area(
-    "Edit subjects/topics if needed",
+    "Edit subjects/topics/subtopics if needed",
     value=json.dumps(syllabus_json, indent=2, ensure_ascii=False),
     height=400
 )
@@ -190,26 +210,37 @@ if st.button("🚀 Generate Study Plan"):
     st.success("✅ Study plan generated!")
 
 # ---------------------------
-# STEP 5: SHOW STUDY PLAN WITH PROGRESS TRACKER
+# STEP 5: DISPLAY PLAN + DAY COMPLETED LOGIC
 # ---------------------------
 if st.session_state.calendar:
     st.subheader("📆 Weekly Study Plan")
-    COLORS = ["#4CAF50","#2196F3","#FF9800","#9C27B0","#009688","#E91E63"]
-
-    for day in st.session_state.calendar:
+    for day_idx, day in enumerate(st.session_state.calendar):
         day_label = day['date'].strftime("%A, %d %b %Y")
         st.markdown(f"### {day_label} ({day['type']} DAY)")
+        unfinished_today = []
         for idx, p in enumerate(day["plan"]):
-            key = f"{day_label}_{idx}_{p['topic']}"
+            key = f"{day_label}_{idx}_{p['subtopic']}"
             checked = key in st.session_state.completed
-            label = f"**{p['subject']} → {p['topic']}** ({p['minutes']} min)"
+            label = f"**{p['subject']} → {p['topic']} → {p['subtopic']}** ({p['minutes']} min)"
             if st.checkbox(label, key=key, value=checked):
                 st.session_state.completed.add(key)
             else:
                 st.session_state.completed.discard(key)
+                unfinished_today.append(p)
+        # Day Completed Button
+        if st.button(f"Mark Day Completed ({day_label})", key=f"complete_day_{day_idx}"):
+            if not unfinished_today:
+                st.success("🎉 All subtopics completed for this day!")
+            else:
+                st.warning(f"{len(unfinished_today)} subtopics unfinished. Carrying forward to next day.")
+                next_idx = day_idx + 1
+                if next_idx >= len(st.session_state.calendar):
+                    next_date = day["date"] + timedelta(days=1)
+                    st.session_state.calendar.append({"date":next_date,"plan":[],"type":"STUDY"})
+                st.session_state.calendar[next_idx]["plan"] = unfinished_today + st.session_state.calendar[next_idx]["plan"]
 
 # ---------------------------
 # STEP 6: SAVE PROGRESS
 # ---------------------------
 with open(STATE_FILE,"w") as f:
-    json.dump(list(st.session_state.completed),f)
+    json.dump(list(st.session_state.completed), f)
