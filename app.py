@@ -14,7 +14,7 @@ STATE_FILE = "progress.json"
 MAX_CONTINUOUS_DAYS = 6
 
 st.set_page_config(page_title="AI Study Planner", layout="wide")
-st.title("📚 AI Study Planner (Junior Engineer Edition)")
+st.title("📚 AI Study Planner ")
 
 # ---------------------------
 # SESSION STATE
