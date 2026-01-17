@@ -1,11 +1,10 @@
 # app.py
 import streamlit as st
 import fitz  # PyMuPDF
-import json, re, os
+import json, re, os, io
 from collections import defaultdict, deque
 from datetime import datetime, timedelta
 from PIL import Image
-import io
 
 # ---------------------------
 # CONFIG
@@ -23,8 +22,6 @@ if "completed" not in st.session_state:
     st.session_state.completed = set()
 if "calendar" not in st.session_state:
     st.session_state.calendar = []
-if "practice_done" not in st.session_state:
-    st.session_state.practice_done = {}
 
 if os.path.exists(STATE_FILE):
     with open(STATE_FILE,"r") as f:
@@ -34,20 +31,20 @@ if os.path.exists(STATE_FILE):
 # PDF READER
 # ---------------------------
 def read_pdf(file):
-    """Read PDF text using PyMuPDF, fallback to OCR"""
-    doc = fitz.open(stream=file.read(), filetype="pdf")
+    """Read PDF text using PyMuPDF; fallback to OCR"""
     lines = []
+    doc = fitz.open(stream=file.read(), filetype="pdf")
     for page in doc:
         text = page.get_text().strip()
         if text:
-            page_lines = [l.strip() for l in text.split("\n") if len(l.strip())>2]
+            lines.extend([l.strip() for l in text.split("\n") if len(l.strip())>2])
         else:
+            # OCR fallback
             pix = page.get_pixmap()
             img = Image.open(io.BytesIO(pix.tobytes()))
             import pytesseract
             ocr_text = pytesseract.image_to_string(img)
-            page_lines = [l.strip() for l in ocr_text.split("\n") if len(l.strip())>2]
-        lines.extend(page_lines)
+            lines.extend([l.strip() for l in ocr_text.split("\n") if len(l.strip())>2])
     return lines
 
 # ---------------------------
@@ -55,12 +52,10 @@ def read_pdf(file):
 # ---------------------------
 def parse_syllabus_hierarchy(files):
     """
-    Robust hierarchy detection:
-    Subject (all caps) → Topic (title case / numbered) → Subtopic (bullets or indented)
-    Returns nested dict: subject -> topic -> list[subtopics]
+    Parse PDFs into hierarchy: Subject -> Topic -> Subtopic
+    Returns nested dict: syllabus[subject][topic] = list(subtopics)
     """
     syllabus = defaultdict(lambda: defaultdict(list))
-
     for f in files:
         temp_path = f"__temp_{f.name}"
         with open(temp_path, "wb") as out:
@@ -70,24 +65,22 @@ def parse_syllabus_hierarchy(files):
 
         subject = None
         topic = None
-
         for l in lines:
             l = l.strip()
-            if len(l) < 2:
-                continue
+            if len(l)<2: continue
 
-            # SUBJECT detection: all caps, letters only, short line
-            if l.isupper() and len(l.split()) <= 6 and re.search(r"[A-Z]", l):
+            # SUBJECT detection: all caps, <=6 words
+            if l.isupper() and len(l.split()) <=6 and re.search(r"[A-Z]",l):
                 subject = l.title()
                 topic = None
                 continue
 
-            # TOPIC detection: title case or numbered 1., 1.1, A., I.
+            # TOPIC detection: title case or numbered
             if re.match(r"^(\d+(\.\d+)?|[A-Z]\.|[IVX]+)\s+", l) or l.istitle():
                 topic = l
                 continue
 
-            # Otherwise treat as subtopic
+            # SUBTOPIC
             if subject:
                 if topic:
                     syllabus[subject][topic].append(l)
@@ -96,9 +89,6 @@ def parse_syllabus_hierarchy(files):
             else:
                 syllabus["General"]["General"].append(l)
 
-    # fallback if empty
-    if not syllabus:
-        syllabus["General"]["General"] = ["Uploaded syllabus content"]
     return dict(syllabus)
 
 # ---------------------------
@@ -188,20 +178,19 @@ def generate_calendar(queue, start_date, daily_hours, revision_every_n_days=7, t
     return calendar
 
 # ---------------------------
-# STEP 1: CHOOSE SYLLABUS
+# STEP 1: SYLLABUS SELECTION
 # ---------------------------
 st.subheader("📌 Syllabus Selection")
-
 option = st.radio("Select syllabus type", ["Available Syllabus", "Upload Syllabus (PDF)"])
-
 syllabus_json = {}
+
 if option == "Available Syllabus":
     exam = st.selectbox("Select Exam", ["NEET","GATE","IIT JEE"])
-    # For demo, mock syllabus
+    # Mock default syllabus
     default_syllabus = {
         "NEET": {"Biology": {"Genetics":["Mendelian laws","DNA"], "Anatomy":["Heart","Lungs"]}},
         "GATE": {"Mechanical": {"Thermodynamics":["Laws","Cycles"]}},
-        "IIT JEE": {"Physics": {"Mechanics":["Newton's laws","Work-Energy"]}} 
+        "IIT JEE": {"Physics": {"Mechanics":["Newton's laws","Work-Energy"]}}
     }
     syllabus_json = default_syllabus.get(exam, {})
 elif option == "Upload Syllabus (PDF)":
