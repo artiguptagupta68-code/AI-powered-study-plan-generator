@@ -1,10 +1,11 @@
 # app.py
 import streamlit as st
 import fitz  # PyMuPDF
-import json, re, os, io
+import json, re, os
 from collections import defaultdict, deque
 from datetime import datetime, timedelta
 from PIL import Image
+import io
 
 # ---------------------------
 # CONFIG
@@ -54,8 +55,9 @@ def read_pdf(file):
 # ---------------------------
 def parse_syllabus_hierarchy(files):
     """
-    Robust hierarchy detection: Subject -> Topic -> Subtopic
-    Detects multiple subjects per PDF
+    Robust hierarchy detection:
+    Subject (all caps or contains keywords) → Topic → Subtopic
+    Returns nested dict: subject -> topic -> list[subtopics]
     """
     syllabus = defaultdict(lambda: defaultdict(list))
 
@@ -74,9 +76,9 @@ def parse_syllabus_hierarchy(files):
             if len(l) < 2:
                 continue
 
-            # SUBJECT detection: all caps OR contains known keywords
+            # SUBJECT detection: all caps OR known keywords
             if (l.isupper() and len(l.split()) <= 6 and re.search(r"[A-Z]", l)) \
-                or re.search(r"(CIVIL|MECHANICAL|ELECTRICAL|BIOLOGY|PHYSICS|CHEMISTRY)", l, re.I):
+                or re.search(r"(CIVIL|MECHANICAL|ELECTRICAL|BIOLOGY|PHYSICS|CHEMISTRY|MATHEMATICS)", l, re.I):
                 subject = l.title()
                 topic = None
                 continue
@@ -128,22 +130,16 @@ def build_queue(syllabus_json, selected_subjects):
 # ASSIGN DAILY PLAN
 # ---------------------------
 def assign_daily_plan(queue, daily_min):
-    """
-    Smart allocation:
-    - Round-robin across subjects
-    - Partial allocation if subtopic exceeds daily capacity
-    - Carry-over handled automatically
-    """
-    plan = []
-    subjects_today = list({item["subject"] for item in queue})
-    subject_queues = {s: deque([item for item in queue if item["subject"]==s]) for s in subjects_today}
+    plan=[]
+    subjects_today=list({item["subject"] for item in queue})
+    if not subjects_today: return plan
+    subject_queues={s:deque([item for item in queue if item["subject"]==s]) for s in subjects_today}
 
-    while daily_min > 0 and any(subject_queues.values()):
+    while daily_min>0 and any(subject_queues.values()):
         for s in subjects_today:
-            if not subject_queues[s]:
-                continue
-            item = subject_queues[s].popleft()
-            alloc = min(item["time"], daily_min)
+            if not subject_queues[s]: continue
+            item=subject_queues[s].popleft()
+            alloc=min(item["time"], daily_min)
             plan.append({
                 "subject": item["subject"],
                 "topic": item["topic"],
@@ -154,13 +150,11 @@ def assign_daily_plan(queue, daily_min):
             item["time"] -= alloc
             if item["time"] <= 0:
                 for idx,q_item in enumerate(queue):
-                    if q_item == item:
+                    if q_item==item:
                         del queue[idx]
                         break
-            else:
-                subject_queues[s].appendleft(item)
-        if all(not q for q in subject_queues.values()):
-            break
+            if daily_min <= 0:
+                break
     return plan
 
 # ---------------------------
@@ -198,16 +192,28 @@ def generate_calendar(queue, start_date, daily_hours, revision_every_n_days=7, t
 # STEP 1: CHOOSE SYLLABUS
 # ---------------------------
 st.subheader("📌 Syllabus Selection")
-option = st.radio("Select syllabus type", ["Available Syllabus", "Upload Syllabus (PDF)"])
-syllabus_json = {}
 
+option = st.radio("Select syllabus type", ["Available Syllabus", "Upload Syllabus (PDF)"])
+
+syllabus_json = {}
 if option == "Available Syllabus":
     exam = st.selectbox("Select Exam", ["NEET","GATE","IIT JEE"])
-    # Example default syllabus
+    # Full default syllabus for multiple subjects per exam
     default_syllabus = {
-        "NEET": {"Biology": {"Genetics":["Mendelian laws","DNA"], "Anatomy":["Heart","Lungs"]}},
-        "GATE": {"Mechanical": {"Thermodynamics":["Laws","Cycles"]}, "Electrical":{"Circuits":["AC/DC"]}},
-        "IIT JEE": {"Physics": {"Mechanics":["Newton's laws","Work-Energy"]}, "Chemistry":{"Organic":["Alkanes","Alkenes"]}}
+        "NEET": {
+            "Biology": {"Genetics":["Mendelian laws","DNA structure"], "Anatomy":["Heart","Lungs"]},
+            "Chemistry": {"Organic":["Alkanes","Alkenes"], "Inorganic":["Periodic Table","Chemical Bonding"]},
+            "Physics": {"Mechanics":["Newton's laws","Work-Energy"], "Optics":["Reflection","Refraction"]}
+        },
+        "GATE": {
+            "Mechanical": {"Thermodynamics":["Laws","Cycles"], "Fluid Mechanics":["Bernoulli","Viscosity"]},
+            "Electrical": {"Circuits":["AC","DC"], "Electromagnetics":["Maxwell's Equations","EM Waves"]}
+        },
+        "IIT JEE": {
+            "Physics": {"Mechanics":["Newton's laws","Work-Energy"], "Electrostatics":["Coulomb's Law","Capacitance"]},
+            "Chemistry": {"Organic":["Alkanes","Alkenes"], "Physical":["Thermodynamics","Equilibrium"]},
+            "Mathematics": {"Calculus":["Limits","Differentiation"], "Algebra":["Matrices","Determinants"]}
+        }
     }
     syllabus_json = default_syllabus.get(exam, {})
 elif option == "Upload Syllabus (PDF)":
@@ -222,10 +228,6 @@ elif option == "Upload Syllabus (PDF)":
 # STEP 2: SUBJECT SELECTION
 # ---------------------------
 subjects = list(syllabus_json.keys())
-if not subjects:
-    st.error("No subjects found in syllabus. Check PDF content.")
-    st.stop()
-
 selected_subjects = st.multiselect("Select Subjects to study", subjects, default=subjects)
 start_date = st.date_input("Start Date", datetime.today())
 daily_hours = st.number_input("Daily study hours",1.0,12.0,6.0)
