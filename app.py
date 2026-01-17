@@ -2,28 +2,27 @@
 import streamlit as st
 import fitz  # PyMuPDF
 from PIL import Image
-import json, re, io, os, zipfile, gdown
+import json, re, io, os
 from collections import defaultdict, deque
 from datetime import datetime, timedelta
 
-# Optional OCR
+# ---------------------------
+# OPTIONAL OCR (SAFE)
+# ---------------------------
 try:
     import pytesseract
     OCR_AVAILABLE = True
-except ImportError:
+except Exception:
     OCR_AVAILABLE = False
 
 # ---------------------------
 # CONFIG
 # ---------------------------
 st.set_page_config(page_title="📚 AI Study Planner", layout="wide")
-st.title("📚 AI Study Planner")
+st.title("📚 AI Study Planner – Junior Engineer")
 
 STATE_FILE = "progress.json"
 MAX_CONTINUOUS_DAYS = 6
-ZIP_PATH = "plan.zip"
-EXTRACT_DIR = "syllabus_data"
-DRIVE_FILE_ID = "1S6fcsuq9KvICTsOBOdp6_WN9FhzruixM"
 
 # ---------------------------
 # SESSION STATE
@@ -36,46 +35,36 @@ if "practice_done" not in st.session_state:
     st.session_state.practice_done = {}
 
 if os.path.exists(STATE_FILE):
-    with open(STATE_FILE,"r") as f:
+    with open(STATE_FILE, "r") as f:
         st.session_state.completed = set(json.load(f))
 
 # ---------------------------
-# PDF READER (TEXT + optional OCR)
+# PDF READER (TEXT + OPTIONAL OCR)
 # ---------------------------
-def read_pdf(file_or_path):
-    if isinstance(file_or_path, str):
-        doc = fitz.open(file_or_path)
-    else:
-        doc = fitz.open(stream=file_or_path.read(), filetype="pdf")
-
+def read_pdf(file):
+    doc = fitz.open(stream=file.read(), filetype="pdf")
     lines = []
     for page in doc:
         text = page.get_text()
         if text.strip():
-            page_lines = [l.strip() for l in text.split("\n") if len(l.strip()) > 2]
-            lines.extend(page_lines)
+            lines.extend([l.strip() for l in text.split("\n") if len(l.strip()) > 2])
         elif OCR_AVAILABLE:
-            # OCR fallback only if pytesseract is installed
             pix = page.get_pixmap()
             img = Image.open(io.BytesIO(pix.tobytes()))
             ocr_text = pytesseract.image_to_string(img)
-            page_lines = [l.strip() for l in ocr_text.split("\n") if len(l.strip()) > 2]
-            lines.extend(page_lines)
+            lines.extend([l.strip() for l in ocr_text.split("\n") if len(l.strip()) > 2])
     return lines
 
 # ---------------------------
-# SYLLABUS PARSING
+# PDF → SYLLABUS JSON
 # ---------------------------
 def pdf_to_syllabus_json(files):
     syllabus = defaultdict(lambda: defaultdict(list))
+    current_subject, current_topic = None, None
+
     for f in files:
-        lines = read_pdf(f)
-        current_subject = None
-        current_topic = None
-        for line in lines:
-            line = line.strip()
-            if not line: continue
-            if line.isupper() and len(line.split()) <= 6 and re.sub(r"[^A-Z]", "", line):
+        for line in read_pdf(f):
+            if line.isupper() and len(line.split()) <= 6:
                 current_subject = line.title()
                 current_topic = None
             elif line[0].isupper() and len(line.split()) <= 10:
@@ -87,233 +76,175 @@ def pdf_to_syllabus_json(files):
                     syllabus[current_subject]["General"].append(line)
                 else:
                     syllabus["General"]["General"].append(line)
+
     return dict(syllabus)
-
-def parse_uploaded_syllabus(files):
-    """Flat list parser for custom uploaded PDFs"""
-    data = defaultdict(list)
-    for f in files:
-        lines = read_pdf(f)
-        subject = None
-        for l in lines:
-            if l.isupper() and l.replace(" ","").isalpha():
-                subject = l.title()
-            elif subject:
-                parts = [p.strip() for p in l.split(",") if len(p.strip())>3]
-                data[subject].extend(parts)
-    return data
-
-def normalize_syllabus(syllabus_json):
-    normalized = {}
-    for subject, topics in syllabus_json.items():
-        if isinstance(topics, list):
-            normalized[subject] = {t: [t] for t in topics}
-        elif isinstance(topics, dict):
-            normalized[subject] = {t: (v if isinstance(v,list) else [v]) for t,v in topics.items()}
-        else:
-            normalized[subject] = {"General": [str(topics)]}
-    return normalized
 
 # ---------------------------
 # TIME ESTIMATION
 # ---------------------------
-def estimate_time(text, exam=None):
+def estimate_time(text):
     words = len(text.split())
-    complexity = len(re.findall(r"(theorem|numerical|derivation|proof)", text.lower()))
-    base = 15 + words*3 + complexity*10
-    weight = {"NEET":1.1,"IIT JEE":1.3,"GATE":1.5}.get(exam,1)
-    return int(base*weight)
+    complexity = len(re.findall(r"(numerical|derivation|theorem|proof)", text.lower()))
+    return max(15, words * 3 + complexity * 10)
 
 # ---------------------------
-# QUEUE BUILDING
+# BUILD QUEUE
 # ---------------------------
-def build_queue(syllabus_json, selected_subjects, exam=None):
+def build_queue(syllabus_json, selected_subjects):
     q = deque()
     for subject in selected_subjects:
-        for topic, subtopics in syllabus_json[subject].items():
-            for subtopic in subtopics:
+        for topic, subs in syllabus_json[subject].items():
+            for sub in subs:
                 q.append({
                     "subject": subject,
                     "topic": topic,
-                    "subtopic": subtopic,
-                    "time": estimate_time(subtopic, exam)
+                    "subtopic": sub,
+                    "time": estimate_time(sub)
                 })
     return q
 
 # ---------------------------
-# ROUND-ROBIN ASSIGNMENT
+# DAILY ASSIGNMENT
 # ---------------------------
 def assign_daily_plan(queue, daily_min):
-    plan=[]
-    subjects_today=list({item["subject"] for item in queue})
-    if not subjects_today: return plan
-    subject_queues={s:deque([item for item in queue if item["subject"]==s]) for s in subjects_today}
-    while daily_min>0 and any(subject_queues.values()):
-        for s in subjects_today:
-            if not subject_queues[s]: continue
-            item=subject_queues[s].popleft()
-            alloc=min(item["time"], daily_min)
-            plan.append({"subject":item["subject"], "topic":item["topic"], "subtopic":item["subtopic"], "minutes":alloc})
-            daily_min -= alloc
-            item["time"] -= alloc
-            if item["time"] <= 0:
-                for idx,q_item in enumerate(queue):
-                    if q_item==item:
-                        del queue[idx]
-                        break
-            if daily_min<=0:
-                break
+    plan = []
+    while queue and daily_min > 0:
+        item = queue[0]
+        alloc = min(item["time"], daily_min)
+        plan.append({**item, "minutes": alloc})
+        item["time"] -= alloc
+        daily_min -= alloc
+        if item["time"] <= 0:
+            queue.popleft()
     return plan
 
 # ---------------------------
-# GENERATE CALENDAR
+# CALENDAR GENERATION
 # ---------------------------
-def generate_calendar(queue, start_date, daily_hours, revision_every_n_days=7, test_every_n_days=14, questions_per_topic=30):
-    calendar=[]
-    streak=0
-    day_count=0
-    cur_date=datetime.combine(start_date, datetime.min.time())
-    daily_min=int(daily_hours*60)
+def generate_calendar(queue, start_date, daily_hours, rev_n, test_n):
+    calendar = []
+    cur_date = datetime.combine(start_date, datetime.min.time())
+    day_count, streak = 0, 0
+    daily_min = int(daily_hours * 60)
+
     while queue:
-        day_type="STUDY"
-        plan=assign_daily_plan(queue, daily_min)
-        if streak>=MAX_CONTINUOUS_DAYS:
-            day_type="FREE"
-            plan=[{"subject":"FREE","topic":"Rest","subtopic":"Relax / Light revision","minutes":0}]
-            streak=0
-        elif day_count%revision_every_n_days==0 and day_count!=0:
-            day_type="REVISION"
-            plan=[{"subject":"REVISION","topic":"Revise Completed","subtopic":"All completed topics", "minutes":daily_min}]
-        elif day_count%test_every_n_days==0 and day_count!=0:
-            day_type="TEST"
-            plan=[{"subject":"TEST","topic":"Test Completed","subtopic":"All completed topics", "minutes":daily_min}]
-        calendar.append({"date":cur_date,"plan":plan,"type":day_type,"questions":questions_per_topic})
-        streak += 1 if day_type=="STUDY" else 0
+        day_type = "STUDY"
+        plan = assign_daily_plan(queue, daily_min)
+
+        if streak >= MAX_CONTINUOUS_DAYS:
+            day_type = "FREE"
+            plan = [{"subject": "FREE", "topic": "Rest", "subtopic": "Relax", "minutes": 0}]
+            streak = 0
+        elif day_count and day_count % rev_n == 0:
+            day_type = "REVISION"
+            plan = [{"subject": "REVISION", "topic": "Revision", "subtopic": "Completed topics", "minutes": daily_min}]
+        elif day_count and day_count % test_n == 0:
+            day_type = "TEST"
+            plan = [{"subject": "TEST", "topic": "Test", "subtopic": "Completed topics", "minutes": daily_min}]
+
+        calendar.append({"date": cur_date, "plan": plan, "type": day_type})
+        streak += 1 if day_type == "STUDY" else 0
         day_count += 1
         cur_date += timedelta(days=1)
+
     return calendar
 
 # ---------------------------
-# STEP 1: SYLLABUS INPUT
+# UPLOAD PDF
 # ---------------------------
-custom_plan = st.checkbox("Create custom syllabus / upload PDF(s)")
-syllabus_json = {}
-exam_name = None
-if custom_plan:
-    exam_name = st.text_input("Enter your Exam Name", key="custom_exam")
-    uploaded_files = st.file_uploader(f"Upload syllabus PDF(s) for {exam_name}", type=["pdf"], accept_multiple_files=True)
-    if uploaded_files:
-        syllabus_json = pdf_to_syllabus_json(uploaded_files)
-else:
-    # Default syllabus from EXTRACT_DIR
-    if not os.path.exists(EXTRACT_DIR):
-        os.makedirs(EXTRACT_DIR)
-    files = [os.path.join(EXTRACT_DIR,f) for f in os.listdir(EXTRACT_DIR) if f.endswith(".pdf")]
-    if files:
-        syllabus_json = pdf_to_syllabus_json(files)
-
-if not syllabus_json:
-    st.error("❌ No syllabus found. Upload at least one PDF.")
+uploaded_files = st.file_uploader("📤 Upload syllabus PDF(s)", type=["pdf"], accept_multiple_files=True)
+if not uploaded_files:
     st.stop()
 
-# Confirm / edit syllabus
-st.subheader("📌 Extracted Syllabus (JSON)")
-json_text = st.text_area("Edit subjects/topics/subtopics if needed",
-                         value=json.dumps(syllabus_json, indent=2, ensure_ascii=False), height=400)
+# ---------------------------
+# PARSE & CONFIRM JSON
+# ---------------------------
+syllabus_json = pdf_to_syllabus_json(uploaded_files)
+st.subheader("📌 Extracted Syllabus (Editable)")
+json_text = st.text_area("Edit if required", json.dumps(syllabus_json, indent=2), height=350)
+
 try:
     syllabus_json = json.loads(json_text)
 except:
     st.error("Invalid JSON")
     st.stop()
 
-confirm = st.checkbox("✅ Confirm syllabus")
-if not confirm:
-    st.warning("Confirm the syllabus to continue.")
+if not st.checkbox("✅ Confirm syllabus"):
     st.stop()
 
-syllabus_json = normalize_syllabus(syllabus_json)
+# ---------------------------
+# SETTINGS
+# ---------------------------
 subjects = list(syllabus_json.keys())
-selected_subjects = st.multiselect("Select subjects", subjects, default=subjects)
-start_date = st.date_input("Start Date", datetime.today())
-daily_hours = st.number_input("Daily study hours",1.0,12.0,6.0)
-revision_every_n_days = st.number_input("Revision every N days",5,30,7)
-test_every_n_days = st.number_input("Test every N days",7,30,14)
-questions_per_topic = st.number_input("Questions per topic per day",10,200,30)
+selected_subjects = st.multiselect("Subjects", subjects, default=subjects)
+start_date = st.date_input("Start date", datetime.today())
+daily_hours = st.number_input("Daily hours", 1.0, 12.0, 6.0)
+rev_n = st.number_input("Revision every N days", 5, 30, 7)
+test_n = st.number_input("Test every N days", 7, 30, 14)
+
+if st.button("🚀 Generate Plan"):
+    queue = build_queue(syllabus_json, selected_subjects)
+    st.session_state.calendar = generate_calendar(queue, start_date, daily_hours, rev_n, test_n)
 
 # ---------------------------
-# GENERATE CALENDAR
+# TABS
 # ---------------------------
-if st.button("🚀 Generate Study Plan"):
-    queue = build_queue(syllabus_json, selected_subjects, exam_name)
-    st.session_state.calendar = generate_calendar(queue, start_date, daily_hours, revision_every_n_days, test_every_n_days, questions_per_topic)
-    st.success("✅ Study plan generated!")
+tab1, tab2 = st.tabs(["📖 Study Plan", "📝 Question Practice"])
 
 # ---------------------------
-# TABS: Study Plan & Question Practice
+# STUDY PLAN + CARRY FORWARD
 # ---------------------------
-tab1, tab2 = st.tabs(["📖 Study Plan","📝 Question Practice"])
-COLORS=["#4CAF50","#2196F3","#FF9800","#9C27B0","#009688","#E91E63"]
-subject_color={s:COLORS[i%len(COLORS)] for i,s in enumerate(selected_subjects)}
-
 with tab1:
-    st.header("📆 Weekly Study Plan")
-    weeks=defaultdict(list)
-    for idx,day in enumerate(st.session_state.calendar):
-        week_num=idx//7+1
-        weeks[week_num].append(day)
+    for i, day in enumerate(st.session_state.calendar):
+        label = day["date"].strftime("%A, %d %b %Y")
+        st.markdown(f"### {label} ({day['type']})")
+        unfinished = []
 
-    for w_num in sorted(weeks.keys()):
-        st.subheader(f"Week {w_num}")
-        for day_idx, day in enumerate(weeks[w_num]):
-            day_type=str(day.get("type","STUDY")).upper()
-            st.markdown(f"**{day['date'].strftime('%A, %d %b %Y')} ({day_type} DAY)**")
-            unfinished_today=[]
-            for i,p in enumerate(day["plan"]):
-                if p["subject"] in ["FREE","REVISION","TEST"]:
-                    st.markdown(f"- **{p['subject']} → {p['topic']}**")
-                    continue
-                key=f"{day['date']}_{i}_{p['subtopic']}"
-                checked=key in st.session_state.completed
-                label=f"{p['subject']} → {p['topic']} → {p['subtopic']} ({p['minutes']} min / {round(p['minutes']/60,2)} h)"
-                if st.checkbox(label,checked,key=f"study_{key}"):
-                    st.session_state.completed.add(key)
-                else:
-                    st.session_state.completed.discard(key)
-                    unfinished_today.append(p)
-            if st.button(f"Mark Day Completed ({day['date'].strftime('%d %b %Y')})", key=f"complete_{day['date']}"):
-                if not unfinished_today:
-                    st.success("🎉 All subtopics completed for this day!")
-                else:
-                    st.warning(f"{len(unfinished_today)} subtopics unfinished. Moving to next day.")
-                    next_idx=day_idx+1
-                    if next_idx>=len(weeks[w_num]):
-                        next_date=day["date"]+timedelta(days=1)
-                        st.session_state.calendar.append({"date":next_date,"plan":[],"questions":questions_per_topic,"type":"STUDY"})
-                    st.session_state.calendar[next_idx]["plan"]=unfinished_today+st.session_state.calendar[next_idx]["plan"]
-
-with tab2:
-    st.header("📝 Daily Question Practice")
-    day_labels=[d["date"].strftime("%A, %d %b %Y") for d in st.session_state.calendar]
-    if day_labels:
-        sel=st.selectbox("Select Day", day_labels, key="practice_day_select")
-        idx=day_labels.index(sel)
-        day=st.session_state.calendar[idx]
-
-        num_questions=st.number_input("Number of questions to practice",1,200,30,key=f"num_questions_{idx}")
-        q_type=st.selectbox("Type of questions",["MCQs","Subjective","Long Questions"], key=f"qtype_{idx}")
-
-        for i,p in enumerate(day["plan"]):
-            if p["subject"] in ["FREE","REVISION","TEST"]:
+        for j, p in enumerate(day["plan"]):
+            if p["subject"] in ["FREE", "REVISION", "TEST"]:
+                st.markdown(f"- **{p['subject']}** → {p['subtopic']}")
                 continue
-            key=f"{sel}_{p['subject']}_{p['topic']}"
-            questions=[f"{q_type} Q{q_idx+1} on {p['topic']}" for q_idx in range(num_questions)]
-            st.markdown(f"**{p['subject']} → {p['topic']}**")
-            for q_idx,q in enumerate(questions):
-                st.checkbox(q,key=f"{key}_q{q_idx}", value=st.session_state.practice_done.get(f"{key}_q{q_idx}",False))
-                st.session_state.practice_done[f"{key}_q{q_idx}"]=st.session_state.practice_done.get(f"{key}_q{q_idx}",False)
+
+            key = f"{label}_{j}_{p['subtopic']}"
+            checked = key in st.session_state.completed
+            if st.checkbox(f"{p['subject']} → {p['topic']} → {p['subtopic']} ({p['minutes']} min)", value=checked, key=key):
+                st.session_state.completed.add(key)
+            else:
+                unfinished.append(p)
+                st.session_state.completed.discard(key)
+
+        if st.button(f"Mark Day Completed ({label})", key=f"done_{i}"):
+            if unfinished:
+                if i + 1 >= len(st.session_state.calendar):
+                    st.session_state.calendar.append({
+                        "date": day["date"] + timedelta(days=1),
+                        "plan": [],
+                        "type": "STUDY"
+                    })
+                st.session_state.calendar[i + 1]["plan"] = unfinished + st.session_state.calendar[i + 1]["plan"]
+
+# ---------------------------
+# QUESTION PRACTICE
+# ---------------------------
+with tab2:
+    days = [d["date"].strftime("%A, %d %b %Y") for d in st.session_state.calendar]
+    if days:
+        sel = st.selectbox("Select Day", days)
+        idx = days.index(sel)
+        day = st.session_state.calendar[idx]
+
+        qn = st.number_input("Questions per subtopic", 5, 100, 20)
+        qtype = st.selectbox("Question Type", ["MCQs", "Numerical", "Subjective"])
+
+        for p in day["plan"]:
+            if p["subject"] in ["FREE", "REVISION", "TEST"]:
+                continue
+            st.markdown(f"**{p['subject']} → {p['subtopic']}**")
+            for k in range(qn):
+                st.checkbox(f"{qtype} Q{k+1}", key=f"{sel}_{p['subtopic']}_{k}")
 
 # ---------------------------
 # SAVE STATE
 # ---------------------------
-with open(STATE_FILE,"w") as f:
-    json.dump(list(st.session_state.completed),f)
+with open(STATE_FILE, "w") as f:
+    json.dump(list(st.session_state.completed), f)
